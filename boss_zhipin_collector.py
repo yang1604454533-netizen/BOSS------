@@ -162,7 +162,8 @@ def sanitize_csv_value(value):
 CSV_FIELDNAMES = [
     '岗位名称', '公司', '规模', '公司领域', '学历要求',
     '经验要求', '技能需求', '福利待遇', '薪资', '薪资原文',
-    '省', '市', '区', '商圈', '经度', '纬度', '岗位链接', 'jobId'
+    '省', '市', '区', '商圈', '经度', '纬度', '岗位链接', 'jobId',
+    '职位描述'
 ]
 
 # 筛选下拉框覆盖的字段（第二行筛选区）
@@ -295,6 +296,104 @@ def job_matches_filters(job, filters, multi_selected=None):
     return True
 
 
+def _html_to_text(s):
+    """把职位描述的 HTML 片段转成纯文本（去标签、换行、反转义、去水印）"""
+    if not s:
+        return ''
+    # 去掉 BOSS 直聘的防爬水印文字（常混在标题/正文中）
+    s = re.sub(r'来自BOSS直聘', '', s)
+    s = re.sub(r'<br\s*/?>', '\n', s, flags=re.I)
+    s = re.sub(r'</p>', '\n', s, flags=re.I)
+    s = re.sub(r'<li[^>]*>', '\n· ', s, flags=re.I)
+    s = re.sub(r'<[^>]+>', '', s)
+    s = s.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+    s = s.replace('&quot;', '"').replace('&#39;', "'")
+    lines = [ln.strip() for ln in s.split('\n')]
+    return '\n'.join(ln for ln in lines if ln).strip()
+
+
+# 职位描述 DOM 候选选择器（按优先级排列，覆盖 PC 旧版与 geek 新版页面）
+DESC_SELECTORS = [
+    'css:.job-sec-text',
+    'css:.job-detail-section .job-sec-text',
+    'css:.job-detail-three .job-sec-text',
+    'css:.job-detail .job-sec-text',
+    'css:.job-detail-section',
+    'css:.job-detail__content',
+    'css:.description__content',
+    'css:.job-detail__desc',
+]
+
+
+def fetch_job_description(page, job_id, timeout=8, logger=None):
+    """在新标签页打开岗位详情页抓取职位描述。
+    直接通过 DOM 解析，避免监听接口路径未必匹配的问题。"""
+    if not job_id:
+        if logger:
+            logger('fetch_job_description: job_id 为空，跳过')
+        return ''
+    tab = None
+    try:
+        tab = page.new_tab()
+        tab.get(f'https://www.zhipin.com/job_detail/{job_id}.html')
+        try:
+            tab.wait.load_complete(timeout=timeout)
+        except Exception:
+            pass
+        if logger:
+            logger(f'fetch_job_description: 详情页加载完成，当前 URL = {tab.url}')
+
+        desc = ''
+        # DOM 多选择器提取（覆盖 PC 旧版、geek 新版等不同页面结构）
+        for sel in DESC_SELECTORS:
+            try:
+                el = tab.ele(sel)
+                text = el.text if el else ''
+                if text and text.strip():
+                    desc = text
+                    if logger:
+                        logger(f'fetch_job_description: 已从选择器 {sel} 提取到描述')
+                    break
+            except Exception:
+                continue
+
+        # 整页文本截取兜底：找「职位描述」之后的文本块
+        if not desc:
+            try:
+                body_el = tab.ele('tag:body')
+                t = body_el.text if body_el else ''
+                m = re.search(r'职位描述\s*([\s\S]*?)(?=\s*(工作地址|任职要求|公司介绍|发布于|举报|相关职位|\n\n参考))', t)
+                if m and m.group(1).strip():
+                    desc = m.group(1).strip()
+                    if logger:
+                        logger('fetch_job_description: 已从整页文本截取到描述')
+            except Exception:
+                pass
+
+        if logger:
+            logger(f'fetch_job_description: 最终描述长度 = {len(desc) if desc else 0}')
+        if not desc and logger:
+            # 诊断：描述为空时，输出页面文本长度及是否含关键词，用于判断是页面未渲染还是选择器不对
+            try:
+                body_el = tab.ele('tag:body')
+                t = body_el.text if body_el else ''
+                logger(f'fetch_job_description: [诊断] body文本长度={len(t)}，含「职位描述」={"职位描述" in t}，'
+                       f'含「任职要求」={"任职要求" in t}，含「岗位职责」={"岗位职责" in t}')
+            except Exception:
+                logger('fetch_job_description: [诊断] 无法读取 body 文本')
+        return _html_to_text(desc)
+    except Exception as e:
+        if logger:
+            logger(f'fetch_job_description: 异常 {type(e).__name__}: {e}')
+        return ''
+    finally:
+        if tab is not None:
+            try:
+                tab.close()
+            except Exception:
+                pass
+
+
 def crawl_boss_zhipin(city_name='北京', city_code=None, keyword='游戏测试', total_pages=5,
                       on_log=None, on_job=None, province_map=None,
                       filters=None, multi_selected=None):
@@ -386,6 +485,11 @@ def crawl_boss_zhipin(city_name='北京', city_code=None, keyword='游戏测试'
                     city_name_job = job.get('cityName', '')
                     gps = job.get('gps') or {}   # gps 可能为 null，防御性取值
                     salary_desc = job.get('salaryDesc', '')
+                    # 采集时同步抓取职位描述（新标签页监听详情接口，不打断列表页）
+                    say(f'正在抓取岗位描述：{job.get("jobName", "")}（{job.get("brandName", "")}）')
+                    job_desc = fetch_job_description(dp, job_id, logger=say)
+                    if not job_desc:
+                        say('  （未获取到职位描述，已留空）')
                     job_info = {
                         '岗位名称': job.get('jobName', ''),
                         '公司': job.get('brandName', ''),
@@ -405,13 +509,20 @@ def crawl_boss_zhipin(city_name='北京', city_code=None, keyword='游戏测试'
                         '纬度': gps.get('latitude', ''),
                         '岗位链接': f'https://www.zhipin.com/job_detail/{job_id}.html' if job_id else '',
                         'jobId': job_id,
+                        '职位描述': job_desc,
                     }
                     # 应用采集时的筛选条件：不符合的岗位不写入CSV、不进入界面列表
                     if filters is not None and not job_matches_filters(job_info, filters, multi_selected):
                         filtered_out += 1
                         continue
-                    # 写入前做公式注入防护（= + - @ 开头加 '）
-                    csv_writer.writerow({k: sanitize_csv_value(v) for k, v in job_info.items()})
+                    # 写入前做公式注入防护（= + - @ 开头加 '），并清洗描述文本（去水印、规范空行）
+                    clean_job_info = {k: sanitize_csv_value(v) for k, v in job_info.items()}
+                    if clean_job_info.get('职位描述'):
+                        raw_desc = clean_job_info['职位描述']
+                        raw_desc = re.sub(r'来自BOSS直聘', '', raw_desc)
+                        raw_desc = re.sub(r'\n{3,}', '\n\n', raw_desc).strip()
+                        clean_job_info['职位描述'] = raw_desc
+                    csv_writer.writerow(clean_job_info)
                     page_new += 1
                     total_written += 1
                     if on_job:
@@ -797,6 +908,7 @@ class BossGuiApp(ctk.CTk):
             self.filter_vars[field].set('全部')
 
     def _on_city_selected(self, value):
+        """城市下拉框选中时同步到输入框"""
         self.city_var.set(value)
 
     def _load_cities_async(self):
@@ -1076,7 +1188,7 @@ class BossGuiApp(ctk.CTk):
         lines = [f'【{job.get("岗位名称", "")}】', '']
         rows = [
             ('公司', '公司'), ('公司领域', '公司领域'), ('规模', '规模'),
-            ('薪资', '薪资'), ('薪资原文', '薪资原文'), ('岗位链接', '岗位链接'),
+            ('薪资原文', '薪资原文'), ('岗位链接', '岗位链接'),
             ('学历要求', '学历要求'), ('经验要求', '经验要求'),
             ('城市', '市'), ('区', '区'), ('商圈', '商圈'),
             ('技能需求', '技能需求'), ('福利待遇', '福利待遇'),
@@ -1088,7 +1200,19 @@ class BossGuiApp(ctk.CTk):
             if value == '' or value is None:
                 value = '-'
             lines.append(f'{label}：{value}')
-        lines.append(f'经度：{job.get("经度", "-")}    纬度：{job.get("纬度", "-")}')
+        lon = job.get('经度', '-') or '-'
+        lat = job.get('纬度', '-') or '-'
+        lines.append(f'经度：{lon}    纬度：{lat}')
+        # 职位描述：先清洗（合并多余空白行），再以小节形式展示
+        desc = job.get('职位描述', '')
+        if desc:
+            # 去掉重复的标题行（DOM 提取时标题可能重复出现）
+            desc = re.sub(r'^\s*职位描述\s*$', '', desc, flags=re.M)
+            desc = re.sub(r'\n{3,}', '\n\n', desc).strip()
+            lines.append('')
+            lines.append('─' * 46)
+            lines.append('【职位描述】')
+            lines.append(desc)
 
         self.detail_box.configure(state='normal')
         self.detail_box.delete('1.0', 'end')

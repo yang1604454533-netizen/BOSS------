@@ -1,0 +1,12 @@
+# 运行产物
+__pycache__/
+*.pyc
+*.pyo
+*.spec
+build/
+dist/
+logs/
+*.csv
+chromedriver*
+chrome_profile/
+chrome_temp/
