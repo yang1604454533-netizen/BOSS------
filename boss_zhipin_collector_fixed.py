@@ -39,6 +39,25 @@ KEYWORD_DEBOUNCE_MS = 400               # 关键词输入防抖延时（毫秒�
 FILTER_APPLY_DELAY_MS = 10              # 筛选变化后延迟重建列表的毫秒数（避免事件回调中重建卡顿）
 MULTI_POPUP_HEIGHT = 260                # 多选下拉面板高度
 
+# ==================== 界面主题色 ====================
+# BOSS直聘 用蓝色系；前程无忧(51job) 用品牌橙色 FF6314。
+# 切换采集网站时，界面上涉及蓝色的部分（标题、主要按钮、下拉框、选中行高亮）会整体切换配色。
+# primary=主色（标题文字/按钮/选中高亮），hover=悬停/加深色。
+THEME_COLORS = {
+    'boss': {'primary': '#1f6aa5', 'hover': '#144870'},
+    '51job': {'primary': '#ff6314', 'hover': '#d9540f'},
+}
+
+# ==================== 城市下拉框 ====================
+# 下拉框只展示这一二线城市前 20，其余城市可在右侧输入框手动输入城市名。
+TOP_CITY_NAMES = [
+    '北京', '上海', '广州', '深圳',       # 一线
+    '成都', '杭州', '重庆', '西安', '苏州',  # 新一线
+    '武汉', '南京', '天津', '郑州', '长沙',
+    '东莞', '沈阳', '昆明', '青岛', '宁波',
+    '合肥',                              # 二线
+]
+
 
 def load_settings():
     """读取用户设置（如导出目录），失败返回空字典"""
@@ -117,6 +136,48 @@ def parse_month_salary(s):
     return None
 
 
+def parse_51job_salary(s):
+    """解析前程无忧（51job）的薪资描述，返回月薪数值，无法解析返回 None。
+
+    51job 常见格式：'8千-1.2万/月'、'1-1.5万/月'、'8千-12千/月'、'20-30万/年'、'8千/月'、'1万/月' 等。
+    年薪会折算为月薪，以复用统一的薪资分档（10K/15K/20K/30K）。"""
+    if not s or '面议' in s:
+        return None
+    # 忽略按天/时薪
+    if '元/天' in s or '元/时' in s or '元/小时' in s:
+        return None
+
+    def to_yuan(v, unit):
+        if unit == '千':
+            return v * 1000
+        if unit == '万':
+            return v * 10000
+        return v
+
+    # 区间：如 "8千-1.2万" / "1-1.5万" / "8千-12千"（任一侧单位省略时沿用另一侧单位；支持 - ~ 至 分隔）
+    m = re.search(r'([\d.]+)\s*(千|万)?\s*[-~至]\s*([\d.]+)\s*(千|万)?', s)
+    if m:
+        unit_low = m.group(2)
+        unit_high = m.group(4)
+        if unit_high and not unit_low:
+            unit_low = unit_high
+        if unit_low and not unit_high:
+            unit_high = unit_low
+        low = to_yuan(float(m.group(1)), unit_low)
+        high = to_yuan(float(m.group(3)), unit_high)
+        avg = (low + high) / 2
+        if '年' in s and '月' not in s:
+            avg /= 12
+        return avg
+
+    # 单一数值：如 "8千/月" / "1万/月"
+    m = re.search(r'([\d.]+)\s*(千|万)\s*/\s*月', s)
+    if m:
+        v = float(m.group(1))
+        return v * 1000 if m.group(2) == '千' else v * 10000
+    return None
+
+
 # ==================== 爬虫核心 ====================
 
 # 热门城市代码（内置兜底；启动时会尝试自动加载全国城市）
@@ -131,6 +192,388 @@ CITY_OPTIONS = {
     '武汉': '101200100',
     '西安': '101110100',
     '苏州': '101190400',
+}
+
+# 前程无忧（51job）城市代码（jobArea 参数），与 BOSS 直聘城市代码体系不同
+CITY_51JOB_OPTIONS = {
+    '北京': '010000',
+    '上海': '020000',
+    '广州': '030200',
+    '惠州': '030300',
+    '汕头': '030400',
+    '珠海': '030500',
+    '佛山': '030600',
+    '中山': '030700',
+    '东莞': '030800',
+    '韶关': '031400',
+    '江门': '031500',
+    '湛江': '031700',
+    '肇庆': '031800',
+    '清远': '031900',
+    '潮州': '032000',
+    '河源': '032100',
+    '揭阳': '032200',
+    '茂名': '032300',
+    '汕尾': '032400',
+    '梅州': '032600',
+    '开平': '032700',
+    '阳江': '032800',
+    '云浮': '032900',
+    '深圳': '040000',
+    '天津': '050000',
+    '重庆': '060000',
+    '南京': '070200',
+    '苏州': '070300',
+    '无锡': '070400',
+    '常州': '070500',
+    '昆山': '070600',
+    '常熟': '070700',
+    '扬州': '070800',
+    '南通': '070900',
+    '镇江': '071000',
+    '徐州': '071100',
+    '连云港': '071200',
+    '盐城': '071300',
+    '张家港': '071400',
+    '太仓': '071600',
+    '泰州': '071800',
+    '淮安': '071900',
+    '宿迁': '072000',
+    '杭州': '080200',
+    '宁波': '080300',
+    '温州': '080400',
+    '绍兴': '080500',
+    '金华': '080600',
+    '嘉兴': '080700',
+    '台州': '080800',
+    '湖州': '080900',
+    '丽水': '081000',
+    '舟山': '081100',
+    '衢州': '081200',
+    '义乌': '081400',
+    '海宁': '081600',
+    '成都': '090200',
+    '绵阳': '090300',
+    '乐山': '090400',
+    '泸州': '090500',
+    '德阳': '090600',
+    '宜宾': '090700',
+    '自贡': '090800',
+    '内江': '090900',
+    '攀枝花': '091000',
+    '南充': '091100',
+    '眉山': '091200',
+    '广安': '091300',
+    '资阳': '091400',
+    '遂宁': '091500',
+    '广元': '091600',
+    '达州': '091700',
+    '雅安': '091800',
+    '西昌': '091900',
+    '巴中': '092000',
+    '甘孜': '092100',
+    '阿坝': '092200',
+    '凉山': '092300',
+    '海口': '100200',
+    '三亚': '100300',
+    '文昌': '100500',
+    '琼海': '100600',
+    '万宁': '100700',
+    '儋州': '100800',
+    '东方': '100900',
+    '五指山': '101000',
+    '定安': '101100',
+    '屯昌': '101200',
+    '澄迈': '101300',
+    '临高': '101400',
+    '三沙': '101500',
+    '琼中': '101600',
+    '保亭': '101700',
+    '白沙': '101800',
+    '昌江': '101900',
+    '乐东': '102000',
+    '陵水': '102100',
+    '福州': '110200',
+    '厦门': '110300',
+    '泉州': '110400',
+    '漳州': '110500',
+    '莆田': '110600',
+    '三明': '110700',
+    '南平': '110800',
+    '宁德': '110900',
+    '龙岩': '111000',
+    '济南': '120200',
+    '青岛': '120300',
+    '烟台': '120400',
+    '潍坊': '120500',
+    '威海': '120600',
+    '淄博': '120700',
+    '临沂': '120800',
+    '济宁': '120900',
+    '东营': '121000',
+    '泰安': '121100',
+    '日照': '121200',
+    '德州': '121300',
+    '菏泽': '121400',
+    '滨州': '121500',
+    '枣庄': '121600',
+    '聊城': '121700',
+    '南昌': '130200',
+    '九江': '130300',
+    '景德镇': '130400',
+    '萍乡': '130500',
+    '新余': '130600',
+    '鹰潭': '130700',
+    '赣州': '130800',
+    '吉安': '130900',
+    '宜春': '131000',
+    '抚州': '131100',
+    '上饶': '131200',
+    '南宁': '140200',
+    '桂林': '140300',
+    '柳州': '140400',
+    '北海': '140500',
+    '玉林': '140600',
+    '梧州': '140700',
+    '防城港': '140800',
+    '钦州': '140900',
+    '贵港': '141000',
+    '百色': '141100',
+    '河池': '141200',
+    '来宾': '141300',
+    '崇左': '141400',
+    '贺州': '141500',
+    '合肥': '150200',
+    '芜湖': '150300',
+    '安庆': '150400',
+    '马鞍山': '150500',
+    '蚌埠': '150600',
+    '阜阳': '150700',
+    '铜陵': '150800',
+    '滁州': '150900',
+    '黄山': '151000',
+    '淮南': '151100',
+    '六安': '151200',
+    '宣城': '151400',
+    '池州': '151500',
+    '宿州': '151600',
+    '淮北': '151700',
+    '亳州': '151800',
+    '石家庄': '160200',
+    '廊坊': '160300',
+    '保定': '160400',
+    '唐山': '160500',
+    '秦皇岛': '160600',
+    '邯郸': '160700',
+    '沧州': '160800',
+    '张家口': '160900',
+    '承德': '161000',
+    '邢台': '161100',
+    '衡水': '161200',
+    '郑州': '170200',
+    '洛阳': '170300',
+    '开封': '170400',
+    '焦作': '170500',
+    '南阳': '170600',
+    '新乡': '170700',
+    '周口': '170800',
+    '安阳': '170900',
+    '平顶山': '171000',
+    '许昌': '171100',
+    '信阳': '171200',
+    '商丘': '171300',
+    '驻马店': '171400',
+    '漯河': '171500',
+    '濮阳': '171600',
+    '鹤壁': '171700',
+    '三门峡': '171800',
+    '济源': '171900',
+    '邓州': '172000',
+    '武汉': '180200',
+    '宜昌': '180300',
+    '黄石': '180400',
+    '襄阳': '180500',
+    '十堰': '180600',
+    '荆州': '180700',
+    '荆门': '180800',
+    '孝感': '180900',
+    '鄂州': '181000',
+    '黄冈': '181100',
+    '随州': '181200',
+    '咸宁': '181300',
+    '仙桃': '181400',
+    '潜江': '181500',
+    '天门': '181600',
+    '神农架': '181700',
+    '恩施': '181800',
+    '长沙': '190200',
+    '株洲': '190300',
+    '湘潭': '190400',
+    '衡阳': '190500',
+    '岳阳': '190600',
+    '常德': '190700',
+    '益阳': '190800',
+    '郴州': '190900',
+    '邵阳': '191000',
+    '怀化': '191100',
+    '娄底': '191200',
+    '永州': '191300',
+    '张家界': '191400',
+    '湘西': '191500',
+    '西安': '200200',
+    '咸阳': '200300',
+    '宝鸡': '200400',
+    '铜川': '200500',
+    '延安': '200600',
+    '渭南': '200700',
+    '榆林': '200800',
+    '汉中': '200900',
+    '安康': '201000',
+    '商洛': '201100',
+    '杨凌': '201200',
+    '太原': '210200',
+    '运城': '210300',
+    '大同': '210400',
+    '临汾': '210500',
+    '长治': '210600',
+    '晋城': '210700',
+    '阳泉': '210800',
+    '朔州': '210900',
+    '晋中': '211000',
+    '忻州': '211100',
+    '吕梁': '211200',
+    '哈尔滨': '220200',
+    '伊春': '220300',
+    '绥化': '220400',
+    '大庆': '220500',
+    '齐齐哈尔': '220600',
+    '牡丹江': '220700',
+    '佳木斯': '220800',
+    '鸡西': '220900',
+    '鹤岗': '221000',
+    '双鸭山': '221100',
+    '黑河': '221200',
+    '七台河': '221300',
+    '大兴安岭': '221400',
+    '沈阳': '230200',
+    '大连': '230300',
+    '鞍山': '230400',
+    '营口': '230500',
+    '抚顺': '230600',
+    '锦州': '230700',
+    '丹东': '230800',
+    '葫芦岛': '230900',
+    '本溪': '231000',
+    '辽阳': '231100',
+    '铁岭': '231200',
+    '盘锦': '231300',
+    '朝阳': '231400',
+    '阜新': '231500',
+    '长春': '240200',
+    '吉林': '240300',
+    '辽源': '240400',
+    '通化': '240500',
+    '四平': '240600',
+    '松原': '240700',
+    '延吉': '240800',
+    '白山': '240900',
+    '白城': '241000',
+    '延边': '241100',
+    '昆明': '250200',
+    '曲靖': '250300',
+    '玉溪': '250400',
+    '大理': '250500',
+    '丽江': '250600',
+    '红河州': '251000',
+    '普洱': '251100',
+    '保山': '251200',
+    '昭通': '251300',
+    '文山': '251400',
+    '西双版纳': '251500',
+    '德宏': '251600',
+    '楚雄': '251700',
+    '临沧': '251800',
+    '怒江': '251900',
+    '迪庆': '252000',
+    '贵阳': '260200',
+    '遵义': '260300',
+    '六盘水': '260400',
+    '安顺': '260500',
+    '铜仁': '260600',
+    '毕节': '260700',
+    '黔西南': '260800',
+    '黔东南': '260900',
+    '黔南': '261000',
+    '兰州': '270200',
+    '金昌': '270300',
+    '嘉峪关': '270400',
+    '酒泉': '270500',
+    '天水': '270600',
+    '武威': '270700',
+    '白银': '270800',
+    '张掖': '270900',
+    '平凉': '271000',
+    '定西': '271100',
+    '陇南': '271200',
+    '庆阳': '271300',
+    '临夏': '271400',
+    '甘南': '271500',
+    '呼和浩特': '280200',
+    '赤峰': '280300',
+    '包头': '280400',
+    '通辽': '280700',
+    '鄂尔多斯': '280800',
+    '巴彦淖尔': '280900',
+    '乌海': '281000',
+    '呼伦贝尔': '281100',
+    '乌兰察布': '281200',
+    '银川': '290200',
+    '吴忠': '290300',
+    '中卫': '290400',
+    '石嘴山': '290500',
+    '固原': '290600',
+    '拉萨': '300200',
+    '日喀则': '300300',
+    '林芝': '300400',
+    '山南': '300500',
+    '昌都': '300600',
+    '那曲': '300700',
+    '阿里': '300800',
+    '乌鲁木齐': '310200',
+    '克拉玛依': '310300',
+    '伊犁': '310500',
+    '阿克苏': '310600',
+    '哈密': '310700',
+    '石河子': '310800',
+    '阿拉尔': '310900',
+    '五家渠': '311000',
+    '图木舒克': '311100',
+    '昌吉': '311200',
+    '阿勒泰': '311300',
+    '吐鲁番': '311400',
+    '塔城': '311500',
+    '和田': '311600',
+    '克孜勒苏柯尔克孜': '311700',
+    '巴音郭楞': '311800',
+    '博尔塔拉': '311900',
+    '昆玉': '312000',
+    '北屯': '312100',
+    '铁门关': '312200',
+    '可克达拉': '312300',
+    '胡杨河': '312400',
+    '双河': '312500',
+    '新星': '312600',
+    '西宁': '320200',
+    '海东': '320300',
+    '海西': '320400',
+    '海北': '320500',
+    '黄南': '320600',
+    '海南州': '320700',
+    '果洛': '320800',
+    '玉树': '320900',
+    '香港': '330000',
+    '澳门': '340000',
+    '台湾': '350000',
 }
 
 # 常见岗位关键词（下拉选项，也可以自定义输入）
@@ -426,12 +869,13 @@ def fetch_job_description(page, job_id, timeout=DESC_FETCH_TIMEOUT, logger=None)
 
 
 def crawl_boss_zhipin(city_name='北京', city_code=None, keyword='游戏测试', total_pages=5,
-                      on_log=None, on_job=None, province_map=None):
+                      on_log=None, on_job=None, province_map=None, should_stop=None):
     """采集BOSS直聘岗位数据。
     city_code: BOSS直聘城市代码（可为空，为空时从热门城市表自动查找）
     province_map: 城市名->省份 映射（用于补全省份信息，可为空）
     on_log: 日志回调(接收字符串)
     on_job: 每采集到一条岗位的回调(接收dict)
+    should_stop: 停止回调(返回 True 时中止采集，可为空)
     说明：本函数只负责采集，不过滤数据；筛选统一在界面层完成，避免采集与界面筛选基准不一致。
     返回最终保存的CSV文件路径
     """
@@ -468,7 +912,12 @@ def crawl_boss_zhipin(city_name='北京', city_code=None, keyword='游戏测试'
         # 3. 循环翻页采集
         seen_job_ids = set()          # 去重：记录已写入的岗位 jobId
         total_written = 0
+        stopped = False
         for page in range(1, total_pages + 1):
+            if should_stop and should_stop():
+                say('⚠ 收到停止指令，采集已中止')
+                stopped = True
+                break
             say(f'========== 正在采集第{page}页数据内容 ==========')
             try:
                 resp = dp.listen.wait(timeout=JOBLIST_TIMEOUT)
@@ -505,6 +954,9 @@ def crawl_boss_zhipin(city_name='北京', city_code=None, keyword='游戏测试'
                 page_new = 0
                 desc_count = 0
                 for job in job_list:
+                    if should_stop and should_stop():
+                        say('⚠ 收到停止指令，本页后续岗位已跳过')
+                        break
                     # 去重：同一岗位翻页重复出现时只保留第一条（jobId 缺失时不过滤，避免误删）
                     job_id = job.get('jobId') or job.get('encryptJobId') or ''
                     if job_id:
@@ -571,7 +1023,259 @@ def crawl_boss_zhipin(city_name='北京', city_code=None, keyword='游戏测试'
                 say(traceback.format_exc())
                 continue
             time.sleep(PAGE_SLEEP_SECONDS)
-        say(f'========== 全部{total_pages}页数据采集完成（去重后共写入 {total_written} 条），结果已存入 {csv_name} ==========')
+        if stopped:
+            say(f'========== 采集已停止（去重后共写入 {total_written} 条），结果已存入 {csv_name} ==========')
+        else:
+            say(f'========== 全部{total_pages}页数据采集完成（去重后共写入 {total_written} 条），结果已存入 {csv_name} ==========')
+    return csv_name
+
+
+# 51job 职位描述 DOM 候选选择器（覆盖旧版与新版详情页）
+DESC_51JOB_SELECTORS = [
+    'css:.job_msg',
+    'css:.bmsg.job_msg.inbox',
+    'css:.des',
+    'css:.job-description',
+    'css:.job-detail__content',
+    'css:div.job-detail',
+]
+
+
+def fetch_51job_description(page, job_href, timeout=DESC_FETCH_TIMEOUT, logger=None):
+    """在新标签页打开前程无忧（51job）岗位详情页抓取职位描述。
+    直接通过 DOM 解析，失败返回空字符串，不影响主流程。"""
+    if not job_href:
+        if logger:
+            logger('fetch_51job_description: job_href 为空，跳过')
+        return ''
+    tab = None
+    try:
+        tab = page.new_tab()
+        tab.get(job_href)
+        try:
+            tab.wait.load_complete(timeout=timeout)
+        except Exception:
+            pass
+        if logger:
+            logger(f'fetch_51job_description: 详情页加载完成，当前 URL = {tab.url}')
+
+        desc = ''
+        for sel in DESC_51JOB_SELECTORS:
+            try:
+                el = tab.ele(sel)
+                text = el.text if el else ''
+                if text and text.strip():
+                    desc = text
+                    if logger:
+                        logger(f'fetch_51job_description: 已从选择器 {sel} 提取到描述')
+                    break
+            except Exception:
+                continue
+
+        # 整页文本截取兜底：找「职位描述/岗位职责/任职要求」之后的文本块
+        if not desc:
+            try:
+                body_el = tab.ele('tag:body')
+                t = body_el.text if body_el else ''
+                for lead in ['职位描述', '岗位职责', '任职要求']:
+                    m = re.search(re.escape(lead) + r'\s*([\s\S]*?)(?=\s*(工作地址|公司信息|公司简介|发布于|举报|\n\n参考))', t)
+                    if m and m.group(1).strip():
+                        desc = m.group(1).strip()
+                        if logger:
+                            logger(f'fetch_51job_description: 已从整页文本截取到描述（标记「{lead}」）')
+                        break
+            except Exception:
+                pass
+
+        if logger:
+            logger(f'fetch_51job_description: 最终描述长度 = {len(desc) if desc else 0}')
+        return _html_to_text(desc)
+    except Exception as e:
+        if logger:
+            logger(f'fetch_51job_description: 异常 {type(e).__name__}: {e}')
+        return ''
+    finally:
+        if tab is not None:
+            try:
+                tab.close()
+            except Exception:
+                pass
+
+
+def crawl_51job(city_name='北京', city_code=None, keyword='游戏测试', total_pages=5,
+                on_log=None, on_job=None, should_stop=None):
+    """采集前程无忧（51job）岗位数据。
+    city_code: 51job 城市代码（jobArea 参数，为空时从 CITY_51JOB_OPTIONS 自动查找）
+    on_log: 日志回调(接收字符串)
+    on_job: 每采集到一条岗位的回调(接收dict)
+    should_stop: 停止回调(返回 True 时中止采集，可为空)
+    字段说明：51job 与 BOSS 直聘字段体系不同，这里统一映射到 CSV_FIELDNAMES 的字段名，
+    薪资用 parse_51job_salary 解析（年薪折算为月薪），保证与 BOSS 采集结果可用同一套筛选逻辑。
+    返回最终保存的CSV文件路径
+    """
+    def say(msg):
+        if on_log:
+            on_log(msg)
+        else:
+            log(msg)
+
+    if not city_code:
+        city_code = CITY_51JOB_OPTIONS.get(city_name, CITY_51JOB_OPTIONS.get('北京', '010000'))
+    total_pages = max(1, int(total_pages))
+
+    # 1. 初始化CSV文件（若被Excel占用会自动换新文件名）
+    today = datetime.date.today().strftime('%Y%m%d')
+    csv_name = f'51job_{city_name}_{keyword}_{today}.csv'
+    f, csv_name = open_csv_retry(csv_name)
+    with f:
+        csv_writer = csv.DictWriter(f, fieldnames=CSV_FIELDNAMES)
+        csv_writer.writeheader()
+
+        # 2. 连接调试模式 Chrome（需要先启动）
+        say(f'正在连接调试模式 Chrome（{CHROME_DEBUG_ADDR}）...')
+        co = ChromiumOptions()
+        co.debugger_address = CHROME_DEBUG_ADDR
+        dp = ChromiumPage(co)
+
+        # 监听 51job 搜索接口（api/job/search-pc）
+        dp.listen.start('search-pc')
+        target_url = f"https://we.51job.com/pc/search?jobArea={quote(city_code)}&keyword={quote(keyword)}"
+        say(f'正在打开页面：{city_name} · {keyword}')
+        dp.get(target_url)
+
+        # 3. 循环翻页采集
+        seen_job_ids = set()          # 去重：记录已写入的岗位 jobId
+        total_written = 0
+        stopped = False
+        for page in range(1, total_pages + 1):
+            if should_stop and should_stop():
+                say('⚠ 收到停止指令，采集已中止')
+                stopped = True
+                break
+            say(f'========== 正在采集第{page}页数据内容 ==========')
+            try:
+                # 第2页起：滚动到底部加载「下一页」按钮，点击触发下一次搜索接口
+                if page > 1:
+                    dp.scroll.to_bottom()
+                    next_btn = dp.ele('css:button.btn-next', timeout=JOBLIST_TIMEOUT)
+                    if not next_btn:
+                        say(f'第{page}页：未找到「下一页」按钮（可能已到最后一页），停止翻页')
+                        break
+                    next_btn.click()
+
+                resp = dp.listen.wait(timeout=JOBLIST_TIMEOUT)
+                if resp is None or not hasattr(resp, 'response'):
+                    say(f'第{page}页：未监听到搜索接口（可能页面未加载、接口路径变更或触发风控），跳过本页')
+                    continue
+                # 防御性取值：部分情况下 resp.response 可能是布尔值而非响应对象
+                response = resp.response
+                resp_body = getattr(response, 'body', None) if response is not None else None
+                # 51job 接口可能把 body 以字符串返回，需先转 JSON 对象
+                if isinstance(resp_body, str):
+                    try:
+                        resp_body = json.loads(resp_body)
+                    except Exception:
+                        resp_body = None
+                if not resp_body:
+                    say(f'第{page}页：接口已捕获但响应体为空，跳过本页')
+                    continue
+                if not isinstance(resp_body, dict):
+                    say(f'第{page}页：接口响应不是 JSON 对象，实际类型：{type(resp_body).__name__}')
+                    continue
+
+                # 解析接口返回数据（逐层判空，避免 KeyError 导致整页丢失）
+                result_job = resp_body.get('resultbody', {}).get('job')
+                if not result_job:
+                    say(f'第{page}页：响应中缺少 resultbody.job 字段')
+                    continue
+                job_list = result_job.get('items')
+                if not job_list:
+                    say(f'第{page}页：没有岗位列表 items（可能被风控或页面改版）')
+                    continue
+
+                page_new = 0
+                desc_count = 0
+                for item in job_list:
+                    if should_stop and should_stop():
+                        say('⚠ 收到停止指令，本页后续岗位已跳过')
+                        break
+                    # 去重：同一岗位翻页重复出现时只保留第一条（jobId 缺失时不过滤，避免误删）
+                    job_id = str(item.get('jobId') or '')
+                    if job_id:
+                        if job_id in seen_job_ids:
+                            continue
+                        seen_job_ids.add(job_id)
+                    # 地区为嵌套结构，可能为 null，防御性取值
+                    area = item.get('jobAreaLevelDetail') or {}
+                    salary_desc = item.get('provideSalaryString', '')
+                    # 技能标签：51job 的 jobTags 前2个通常是插入广告/无关标签，跳过
+                    tags = item.get('jobTags') or []
+                    skills = [str(t) for t in tags[2:] if t]
+                    # 福利待遇：51job 列表接口字段名不固定，做多字段兜底
+                    welfare = item.get('jobWelfare') or item.get('jobwelf') or item.get('welfare') or []
+                    if isinstance(welfare, dict):
+                        welfare = [str(v) for k, v in welfare.items() if v]
+                    elif isinstance(welfare, str):
+                        welfare = [welfare]
+                    elif not isinstance(welfare, list):
+                        welfare = []
+                    # 详情页链接可能为相对路径，补全为绝对地址
+                    job_href = item.get('jobHref') or ''
+                    if job_href and not str(job_href).startswith('http'):
+                        job_href = 'https://jobs.51job.com' + (job_href if str(job_href).startswith('/') else '/' + str(job_href))
+                    # 采集时同步抓取职位描述（新标签页打开详情页，不打断列表页）
+                    if desc_count < DESC_FETCH_BATCH:
+                        say(f'正在抓取岗位描述：{item.get("jobName", "")}（{item.get("fullCompanyName", "")}）')
+                        job_desc = fetch_51job_description(dp, job_href, logger=say)
+                        desc_count += 1
+                        time.sleep(DESC_FETCH_DELAY)
+                    else:
+                        job_desc = ''
+                        say(f'本页职位描述已达抓取上限（{DESC_FETCH_BATCH} 条），后续岗位描述留空')
+                    if not job_desc:
+                        say('  （未获取到职位描述，已留空）')
+                    job_info = {
+                        '岗位名称': item.get('jobName', ''),
+                        '公司': item.get('fullCompanyName', '') or item.get('companyName', ''),
+                        '规模': item.get('companySizeString', ''),
+                        '公司领域': item.get('industryType1Str', ''),
+                        '学历要求': item.get('degreeString', ''),
+                        '经验要求': item.get('workYearString', ''),
+                        '技能需求': skills,
+                        '福利待遇': welfare,
+                        '薪资': parse_51job_salary(salary_desc),
+                        '薪资原文': salary_desc,
+                        '省': area.get('provinceString', ''),
+                        '市': area.get('cityString', '') or city_name,
+                        '区': area.get('districtString', ''),
+                        '商圈': item.get('landmarkString', ''),
+                        '经度': item.get('lon', ''),
+                        '纬度': item.get('lat', ''),
+                        '岗位链接': job_href,
+                        'jobId': job_id,
+                        '职位描述': job_desc,
+                    }
+                    # 写入前做公式注入防护（= + - @ 开头加 '）
+                    clean_job_info = {k: sanitize_csv_value(v) for k, v in job_info.items()}
+                    csv_writer.writerow(clean_job_info)
+                    page_new += 1
+                    total_written += 1
+                    if on_job:
+                        on_job(job_info)
+                dup_skipped = len(job_list) - page_new
+                if dup_skipped > 0:
+                    say(f'第{page}页：接口返回 {len(job_list)} 条，其中 {dup_skipped} 条重复已跳过，实际写入 {page_new} 条')
+                else:
+                    say(f'第{page}页：成功获取 {len(job_list)} 条岗位数据，开始写入CSV...')
+            except Exception as e:
+                say(f'第{page}页数据采集异常：{type(e).__name__}: {e}')
+                say(traceback.format_exc())
+                continue
+            time.sleep(PAGE_SLEEP_SECONDS)
+        if stopped:
+            say(f'========== 采集已停止（去重后共写入 {total_written} 条），结果已存入 {csv_name} ==========')
+        else:
+            say(f'========== 全部{total_pages}页数据采集完成（去重后共写入 {total_written} 条），结果已存入 {csv_name} ==========')
     return csv_name
 
 
@@ -705,11 +1409,11 @@ class BossGuiApp(ctk.CTk):
         ctk.set_appearance_mode('light')
         ctk.set_default_color_theme('blue')
 
-        self.title('BOSS直聘岗位采集助手')
+        self.title('岗位采集助手')
         # 窗口宽度固定；高度自动适配屏幕，避免超出屏幕导致内容被压缩看不见
         screen_h = self.winfo_screenheight()
         win_h = min(1294, max(760, screen_h - 80))
-        self.geometry(f'1182x{win_h}')
+        self.geometry(f'1300x{win_h}')
         self.resizable(False, False)
 
         self.msg_queue = queue.Queue()   # 后台线程 -> 界面 的消息队列
@@ -718,6 +1422,7 @@ class BossGuiApp(ctk.CTk):
         self.row_buttons = []            # 列表区每一行的按钮控件
         self.selected_idx = None         # 当前选中的行号（对应 filtered_jobs）
         self.crawling = False            # 是否正在采集
+        self._stop_event = threading.Event()  # 停止采集事件（线程安全）
         self._empty_hint = None          # 列表为空时的提示文字
         self.all_cities = dict(CITY_OPTIONS)   # 全国城市表 {城市名: 城市代码}
         self.filter_vars = {}            # 筛选下拉框变量 {字段: StringVar}
@@ -730,6 +1435,11 @@ class BossGuiApp(ctk.CTk):
         self.multi_options = {f: [] for f in MULTI_SELECT_FIELDS}      # 各多选字段的可选列表（预设+实际数据）
         self.multi_btns = {}                                           # 多选按钮控件 {字段: CTkButton}
         self.province_map = {}           # 城市名->省份 映射（用于补全省份信息）
+        self.current_site = 'boss'                        # 当前采集网站：'boss' 或 '51job'
+        self.all_51job_cities = dict(CITY_51JOB_OPTIONS)  # 51job 城市表 {城市名: 城市代码}
+        self._theme_key = 'boss'                          # 当前主题：'boss' 或 '51job'
+        self._theme = THEME_COLORS[self._theme_key]       # 当前主题色 {primary, hover}
+        self._theme_widgets = []                          # 需跟随主题变色的控件（在 _build_ui 中填充）
         # 加载保存的设置（导出目录等），默认使用脚本所在目录
         settings = load_settings()
         self.export_dir = settings.get('export_dir') or BASE_DIR
@@ -754,12 +1464,13 @@ class BossGuiApp(ctk.CTk):
         self.grid_rowconfigure(4, weight=1)
 
         # 顶部标题
+        self.title_label = ctk.CTkLabel(
+            self, text='岗位采集助手',
+            font=ctk.CTkFont(size=28, weight='bold'), text_color=self._theme['primary']
+        )
+        self.title_label.grid(row=0, column=0, pady=(18, 2))
         ctk.CTkLabel(
-            self, text='BOSS直聘 岗位采集助手',
-            font=ctk.CTkFont(size=28, weight='bold'), text_color='#1f6aa5'
-        ).grid(row=0, column=0, pady=(18, 2))
-        ctk.CTkLabel(
-            self, text='自动采集岗位信息 · 点选查看详情 · 一键导出表格',
+            self, text='支持 BOSS直聘 / 前程无忧(51job) · 自动采集 · 点选详情 · 一键导出表格',
             font=ctk.CTkFont(size=14), text_color='gray'
         ).grid(row=1, column=0, pady=(0, 6))
 
@@ -767,39 +1478,54 @@ class BossGuiApp(ctk.CTk):
         param_frame = ctk.CTkFrame(self, corner_radius=12)
         param_frame.grid(row=2, column=0, padx=20, pady=10, sticky='ew')
 
-        ctk.CTkLabel(param_frame, text='选择城市：', font=ctk.CTkFont(size=15)).grid(row=0, column=0, padx=(16, 4), pady=14)
+        # 采集网站切换（第一行）
+        ctk.CTkLabel(param_frame, text='采集网站：', font=ctk.CTkFont(size=15)).grid(row=0, column=0, padx=(16, 4), pady=(12, 4))
+        self.site_var = ctk.StringVar(value='BOSS直聘')
+        self.site_menu = ctk.CTkOptionMenu(
+            param_frame, variable=self.site_var, values=['BOSS直聘', '前程无忧(51job)'],
+            width=160, font=ctk.CTkFont(size=14), command=self._on_site_selected
+        )
+        self.site_menu.grid(row=0, column=1, padx=(0, 14), pady=(12, 4), sticky='w')
+
+        ctk.CTkLabel(param_frame, text='选择城市：', font=ctk.CTkFont(size=15)).grid(row=1, column=0, padx=(16, 4), pady=(4, 14))
         self.city_var = ctk.StringVar(value='北京')
         self.city_menu = ctk.CTkOptionMenu(
             param_frame, variable=self.city_var, values=list(CITY_OPTIONS.keys()),
             width=110, font=ctk.CTkFont(size=14), command=self._on_city_selected
         )
-        self.city_menu.grid(row=0, column=1, padx=(0, 8), pady=14)
+        self.city_menu.grid(row=1, column=1, padx=(0, 8), pady=(4, 14))
         ctk.CTkEntry(
             param_frame, textvariable=self.city_var, width=110,
             placeholder_text='可自定义输入', font=ctk.CTkFont(size=14)
-        ).grid(row=0, column=2, padx=(0, 14), pady=14)
+        ).grid(row=1, column=2, padx=(0, 14), pady=(4, 14))
 
-        ctk.CTkLabel(param_frame, text='岗位关键词：', font=ctk.CTkFont(size=15)).grid(row=0, column=3, padx=(0, 4), pady=14)
+        ctk.CTkLabel(param_frame, text='岗位关键词：', font=ctk.CTkFont(size=15)).grid(row=1, column=3, padx=(0, 4), pady=(4, 14))
         self.keyword_var = ctk.StringVar(value='游戏测试')
         self.keyword_menu = ctk.CTkOptionMenu(
             param_frame, variable=self.keyword_var, values=KEYWORD_OPTIONS,
             width=130, font=ctk.CTkFont(size=14), command=self._on_keyword_selected
         )
-        self.keyword_menu.grid(row=0, column=4, padx=(0, 8), pady=14)
+        self.keyword_menu.grid(row=1, column=4, padx=(0, 8), pady=(4, 14))
         self.keyword_entry = ctk.CTkEntry(
             param_frame, textvariable=self.keyword_var, width=130,
             placeholder_text='可自定义输入', font=ctk.CTkFont(size=14))
-        self.keyword_entry.grid(row=0, column=5, padx=(0, 14), pady=14)
+        self.keyword_entry.grid(row=1, column=5, padx=(0, 14), pady=(4, 14))
 
-        ctk.CTkLabel(param_frame, text='采集页数：', font=ctk.CTkFont(size=15)).grid(row=0, column=6, padx=(0, 4), pady=14)
+        ctk.CTkLabel(param_frame, text='采集页数：', font=ctk.CTkFont(size=15)).grid(row=1, column=6, padx=(0, 4), pady=(4, 14))
         self.pages_var = ctk.StringVar(value='5')
-        ctk.CTkEntry(param_frame, textvariable=self.pages_var, width=60, font=ctk.CTkFont(size=14)).grid(row=0, column=7, pady=14)
+        ctk.CTkEntry(param_frame, textvariable=self.pages_var, width=60, font=ctk.CTkFont(size=14)).grid(row=1, column=7, pady=(4, 14))
 
         self.start_btn = ctk.CTkButton(
             param_frame, text='开始采集', font=ctk.CTkFont(size=16, weight='bold'),
-            width=125, height=38, command=self._start_crawl
+            width=125, height=38, command=self._start_crawl, text_color='white'
         )
-        self.start_btn.grid(row=0, column=8, padx=14, pady=12)
+        self.start_btn.grid(row=1, column=8, padx=(4, 8), pady=(4, 14))
+        self.stop_btn = ctk.CTkButton(
+            param_frame, text='停止采集', font=ctk.CTkFont(size=16, weight='bold'),
+            width=125, height=38, command=self._stop_crawl,
+            fg_color='#e74c3c', hover_color='#c0392b', text_color='white'
+        )
+        self.stop_btn.grid(row=1, column=9, padx=(0, 14), pady=(4, 14))
 
         # ---------- 筛选区（第二行，对采集结果按字段筛选） ----------
         filter_frame = ctk.CTkFrame(self, corner_radius=12)
@@ -884,28 +1610,32 @@ class BossGuiApp(ctk.CTk):
         # ---------- 操作按钮 ----------
         action_frame = ctk.CTkFrame(self, corner_radius=12)
         action_frame.grid(row=5, column=0, padx=20, pady=(0, 10), sticky='ew')
-        ctk.CTkButton(
+        self.export_selected_btn = ctk.CTkButton(
             action_frame, text='导出选中的岗位', font=ctk.CTkFont(size=14),
             width=150, height=34, command=self._export_selected
-        ).pack(side='left', padx=16, pady=10)
-        ctk.CTkButton(
+        )
+        self.export_selected_btn.pack(side='left', padx=16, pady=10)
+        self.export_all_btn = ctk.CTkButton(
             action_frame, text='导出全部岗位', font=ctk.CTkFont(size=14),
             width=150, height=34, command=self._export_all
-        ).pack(side='left', padx=6, pady=10)
-        ctk.CTkButton(
+        )
+        self.export_all_btn.pack(side='left', padx=6, pady=10)
+        self.export_filtered_btn = ctk.CTkButton(
             action_frame, text='导出当前列表', font=ctk.CTkFont(size=14),
             width=150, height=34, command=self._export_filtered
-        ).pack(side='left', padx=6, pady=10)
+        )
+        self.export_filtered_btn.pack(side='left', padx=6, pady=10)
         # 导出目录设置（可自定义，路径会自动记住）
         ctk.CTkLabel(action_frame, text='导出目录：', font=ctk.CTkFont(size=13)).pack(side='left', padx=(24, 0), pady=10)
         self.export_dir_label = ctk.CTkLabel(
             action_frame, text=self.export_dir, font=ctk.CTkFont(size=13),
             text_color='gray', width=300, anchor='w')
         self.export_dir_label.pack(side='left', padx=(0, 8), pady=10)
-        ctk.CTkButton(
+        self.export_dir_btn = ctk.CTkButton(
             action_frame, text='更改目录', font=ctk.CTkFont(size=13),
             width=90, height=32, command=self._choose_export_dir
-        ).pack(side='left', padx=(0, 16), pady=10)
+        )
+        self.export_dir_btn.pack(side='left', padx=(0, 16), pady=10)
         # 打开结果：一键打开导出目录中最近的 CSV 文件
         ctk.CTkButton(
             action_frame, text='打开结果', font=ctk.CTkFont(size=13, weight='bold'),
@@ -923,7 +1653,17 @@ class BossGuiApp(ctk.CTk):
         ctk.CTkLabel(log_frame, text='运行日志', font=ctk.CTkFont(size=15, weight='bold')).pack(anchor='w', padx=16, pady=(10, 4))
         self.log_box = ctk.CTkTextbox(log_frame, height=230, font=ctk.CTkFont(size=13), state='disabled')
         self.log_box.pack(fill='x', padx=16, pady=(0, 12))
-        self._log_ui('欢迎使用 BOSS直聘岗位采集助手！请先按说明用调试模式打开 Chrome，再开始采集。')
+        self._log_ui('欢迎使用岗位采集助手！请先按说明用调试模式打开 Chrome，再选择网站开始采集。')
+
+        # 收集需跟随主题变色的控件（标题已单独处理），并统一对齐到当前主题色
+        self._theme_widgets = (
+            [self.start_btn, self.site_menu, self.city_menu, self.keyword_menu]
+            + list(self.filter_menus.values())
+            + list(self.location_menus.values())
+            + list(self.multi_btns.values())
+            + [self.export_selected_btn, self.export_all_btn, self.export_filtered_btn, self.export_dir_btn]
+        )
+        self._apply_theme()
 
     # ---------- 事件处理 ----------
 
@@ -959,6 +1699,46 @@ class BossGuiApp(ctk.CTk):
         """城市下拉框选中时同步到输入框"""
         self.city_var.set(value)
 
+    def _refresh_city_menu(self):
+        """按当前采集网站刷新城市下拉框：只显示一二线城市前20，其余可手动输入"""
+        table = self.all_51job_cities if self.current_site == '51job' else self.all_cities
+        # 只保留榜单中存在于当前城市表里的城市（保持榜单顺序）
+        options = [name for name in TOP_CITY_NAMES if name in table]
+        if not options:
+            options = list(table.keys())[:20]
+        current = self.city_var.get()
+        if current and current not in options:
+            options = [current] + list(options)
+        self.city_menu.configure(values=options)
+
+    def _apply_theme(self):
+        """把界面上涉及主题色的控件整体刷新为当前主题色（BOSS 蓝 / 51job 橙）"""
+        primary = self._theme['primary']
+        hover = self._theme['hover']
+        self.title_label.configure(text_color=primary)
+        for w in self._theme_widgets:
+            try:
+                # CTkOptionMenu 是「左侧值显示区(fg_color) + 右侧箭头按钮(button_color)」两部分都得改
+                if isinstance(w, ctk.CTkOptionMenu):
+                    w.configure(fg_color=primary, button_color=primary,
+                                button_hover_color=hover, text_color='white')
+                else:
+                    w.configure(fg_color=primary, hover_color=hover, text_color='white')
+            except Exception:
+                pass
+        # 刷新列表选中态高亮（选中行用主题色，未选中行保持灰色）
+        self._refresh_selection()
+
+    def _on_site_selected(self, value):
+        """切换采集网站：更新当前站点标记、主题色，并刷新城市下拉框"""
+        self.current_site = '51job' if value.startswith('前程无忧') else 'boss'
+        self._theme_key = self.current_site
+        self._theme = THEME_COLORS[self._theme_key]
+        self.city_var.set('北京')
+        self._refresh_city_menu()
+        self._apply_theme()
+        self._log_ui(f'已切换采集网站：{value}（城市代码与界面配色已同步切换）')
+
     def _load_cities_async(self):
         """后台拉取城市数据（全国城市表 + 热门城市 + 省份映射），成功后更新下拉框（不阻塞界面）"""
         def worker():
@@ -972,15 +1752,11 @@ class BossGuiApp(ctk.CTk):
             self.all_cities = cities
             if province_map:
                 self.province_map = province_map
-            # 下拉框只显示热门城市（约10个），其余城市可手动输入
-            options = hot_names or sorted(cities.keys())
-            current = self.city_var.get()
-            if current and current not in options:
-                options = [current] + list(options)
-            self.city_menu.configure(values=options)
-            self._log_ui(f'✅ 已加载城市数据：下拉框显示 {len(options)} 个热门城市，全部 {len(cities)} 个城市可手动输入')
+            self._log_ui(f'✅ 已加载城市数据：下拉框显示一二线城市前 {len(TOP_CITY_NAMES)} 个，全部 {len(cities)} 个城市可手动输入')
         else:
             self._log_ui('⚠ 城市数据加载失败，使用内置热门城市（仍可直接输入城市名）')
+        # 按当前采集网站刷新城市下拉框（BOSS 或 51job）
+        self._refresh_city_menu()
 
     def _start_crawl(self):
         if self.crawling:
@@ -999,29 +1775,51 @@ class BossGuiApp(ctk.CTk):
             messagebox.showwarning('提示', '采集页数请输入数字')
             return
 
-        # 解析城市代码：优先全国城市表，其次内置热门城市
-        city_code = self.all_cities.get(city) or CITY_OPTIONS.get(city)
+        is_51job = self.current_site == '51job'
+        site_label = '前程无忧(51job)' if is_51job else 'BOSS直聘'
+        # 解析城市代码：两站城市代码体系不同，分别查找
+        if is_51job:
+            city_code = self.all_51job_cities.get(city)
+        else:
+            city_code = self.all_cities.get(city) or CITY_OPTIONS.get(city)
         if not city_code:
-            messagebox.showwarning('提示', f'未找到城市「{city}」的城市代码，请从下拉列表中选择，或尝试输入其他写法（如「北京」）')
+            messagebox.showwarning('提示', f'未找到城市「{city}」在{site_label}的城市代码，请从下拉列表中选择，或尝试输入其他写法（如「北京」）')
             return
 
         self.crawling = True
+        self._stop_event.clear()
         self.start_btn.configure(state='disabled')
         # 开始新的采集时重置筛选条件：新数据全部采集不按筛选过滤，避免旧筛选把新岗位全部过滤导致列表看似为空
         self._clear_jobs(silent=True, reset_filters=True)
-        self._log_ui(f'▶ 开始采集：{city} · {keyword}，共 {pages} 页（后台运行中，界面可正常操作）')
+        self._log_ui(f'▶ 开始采集（{site_label}）：{city} · {keyword}，共 {pages} 页（后台运行中，界面可正常操作）')
 
         worker = threading.Thread(
-            target=self._worker, args=(city, city_code, keyword, pages), daemon=True)
+            target=self._worker, args=(city, city_code, keyword, pages, is_51job), daemon=True)
         worker.start()
 
-    def _worker(self, city, city_code, keyword, pages):
+    def _stop_crawl(self):
+        """请求停止当前采集（后台线程在翻页/处理岗位间隙检查并退出）"""
+        if not self.crawling:
+            self._log_ui('当前没有正在进行的采集任务')
+            return
+        self._stop_event.set()
+        self._log_ui('⏹ 已请求停止采集，正在收尾（最多等待当前页/当前岗位处理完成）...')
+
+    def _worker(self, city, city_code, keyword, pages, is_51job):
         try:
-            crawl_boss_zhipin(
-                city_name=city, city_code=city_code, keyword=keyword, total_pages=pages,
-                on_log=lambda m: self.msg_queue.put(('log', m)),
-                on_job=lambda j: self.msg_queue.put(('job', j)),
-                province_map=self.province_map)
+            if is_51job:
+                crawl_51job(
+                    city_name=city, city_code=city_code, keyword=keyword, total_pages=pages,
+                    on_log=lambda m: self.msg_queue.put(('log', m)),
+                    on_job=lambda j: self.msg_queue.put(('job', j)),
+                    should_stop=self._stop_event.is_set)
+            else:
+                crawl_boss_zhipin(
+                    city_name=city, city_code=city_code, keyword=keyword, total_pages=pages,
+                    on_log=lambda m: self.msg_queue.put(('log', m)),
+                    on_job=lambda j: self.msg_queue.put(('job', j)),
+                    province_map=self.province_map,
+                    should_stop=self._stop_event.is_set)
         except Exception as e:
             self.msg_queue.put(('log', f'爬虫运行异常：{type(e).__name__}: {e}'))
             self.msg_queue.put(('log', '排查建议：1) 是否已用调试模式启动 Chrome（命令行运行 chrome.exe --remote-debugging-port=9222） 2) 是否有其他程序占用 9222 端口'))
@@ -1042,11 +1840,12 @@ class BossGuiApp(ctk.CTk):
                     self._apply_cities(data[0], data[1], data[2])
                 elif kind == 'done':
                     self.crawling = False
+                    self._stop_event.clear()
                     self.start_btn.configure(state='normal')
                     if not self.jobs:
                         self._log_ui('⚠ 本次采集没有获取到任何岗位。排查建议：')
                         self._log_ui('   1) 是否已用调试模式启动 Chrome？命令行执行：chrome.exe --remote-debugging-port=9222')
-                        self._log_ui('   2) Chrome 里是否已登录 BOSS直聘（未登录或触发验证码会无数据）')
+                        self._log_ui('   2) Chrome 里是否已登录对应招聘网站（BOSS直聘需登录；51job 若触发验证码也需登录）')
                         self._log_ui('   3) 检查上方日志中每一页的采集情况，确认是否被风控或接口变更')
                     else:
                         self._log_ui(f'✅ 本次采集完成，共 {len(self.jobs)} 条岗位，可点选查看详情或导出')
@@ -1089,7 +1888,10 @@ class BossGuiApp(ctk.CTk):
 
         btn = ctk.CTkButton(
             self.job_list_box, text=text, anchor='w', height=40,
-            font=ctk.CTkFont(size=13), command=lambda i=idx: self._select_job(i))
+            font=ctk.CTkFont(size=13), command=lambda i=idx: self._select_job(i),
+            fg_color=('#e9e9e9', '#3a3a3a'),
+            text_color=('#1a1a1a', '#dddddd'),
+            hover_color=('#d5d5d5', '#4a4a4a'))
         btn.pack(fill='x', padx=4, pady=3)
         self.row_buttons.append(btn)
 
@@ -1277,7 +2079,7 @@ class BossGuiApp(ctk.CTk):
     def _refresh_selection(self):
         for i, btn in enumerate(self.row_buttons):
             if i == self.selected_idx:
-                btn.configure(fg_color='#1f6aa5', text_color='white', hover_color='#144870')
+                btn.configure(fg_color=self._theme['primary'], text_color='white', hover_color=self._theme['hover'])
             else:
                 btn.configure(
                     fg_color=('#e9e9e9', '#3a3a3a'),
