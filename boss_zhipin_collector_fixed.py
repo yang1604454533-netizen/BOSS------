@@ -112,36 +112,72 @@ def _debug_browser_ready():
         return False
 
 
-def ensure_debug_browser():
-    """确保调试模式浏览器已启动：已在运行则复用，否则用独立用户数据目录自动启动。
+def _move_browser_window(visible):
+    """调整调试浏览器窗口位置：visible=True 移到可见区域，False 移到屏幕外隐藏。
 
-    独立用户数据目录放在软件目录下（browser_profile_xxx），登录态会保存在里面，
-    下次启动自动复用，无需再登录。返回 (是否成功, 提示信息)。"""
-    if _debug_browser_ready():
-        return True, '调试浏览器已在运行，直接复用'
-    browser_key = detect_browser()
-    exe_path = _browser_exe_path(browser_key)
-    if not exe_path:
-        return False, (f'未找到 {BROWSERS[browser_key]["name"]}，请手动运行：'
-                       f'{BROWSERS[browser_key]["exe"]} --remote-debugging-port=9222')
-    profile_dir = os.path.join(BASE_DIR, f'browser_profile_{browser_key}')
+    通过 CDP 控制窗口位置，让用户无感：采集时浏览器在屏幕外运行，只看到软件界面结果。"""
     try:
-        os.makedirs(profile_dir, exist_ok=True)
+        co = ChromiumOptions()
+        co.debugger_address = CHROME_DEBUG_ADDR
+        dp = ChromiumPage(co)
+        if visible:
+            try:
+                dp.set.window.normal()
+                dp.set.window.location(80, 80)
+            except Exception:
+                pass
+        else:
+            try:
+                dp.set.window.location(-32000, -32000)
+            except Exception:
+                pass
     except Exception:
-        profile_dir = None
-    cmd = [exe_path, '--remote-debugging-port=9222', '--no-first-run', '--no-default-browser-check']
-    if profile_dir:
-        cmd.append(f'--user-data-dir={profile_dir}')
-    try:
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception as e:
-        return False, f'启动浏览器失败：{e}'
-    for _ in range(50):
-        time.sleep(0.2)
-        if _debug_browser_ready():
-            return True, f'已自动启动 {BROWSERS[browser_key]["name"]}（调试模式）'
-    return False, (f'{BROWSERS[browser_key]["name"]} 启动超时，请手动运行：'
-                   f'{BROWSERS[browser_key]["exe"]} --remote-debugging-port=9222')
+        pass
+
+
+def ensure_debug_browser(visible=False):
+    """确保调试模式浏览器已启动并调整到目标显示状态。
+
+    visible=False（默认）：浏览器在屏幕外运行，用户无感，只看到软件界面的采集结果。
+    visible=True：浏览器显示到可见区域（用于首次登录）。
+    独立用户数据目录放在软件目录下（browser_profile_xxx），登录态会保存并复用。
+    返回 (是否成功, 提示信息)。"""
+    launched = False
+    browser_key = detect_browser()
+    if not _debug_browser_ready():
+        exe_path = _browser_exe_path(browser_key)
+        if not exe_path:
+            return False, (f'未找到 {BROWSERS[browser_key]["name"]}，请手动运行：'
+                           f'{BROWSERS[browser_key]["exe"]} --remote-debugging-port=9222')
+        profile_dir = os.path.join(BASE_DIR, f'browser_profile_{browser_key}')
+        try:
+            os.makedirs(profile_dir, exist_ok=True)
+        except Exception:
+            profile_dir = None
+        # 先放到屏幕外启动，避免窗口闪现
+        cmd = [exe_path, '--remote-debugging-port=9222', '--no-first-run',
+               '--no-default-browser-check', '--window-position=-32000,-32000',
+               '--window-size=800,600']
+        if profile_dir:
+            cmd.append(f'--user-data-dir={profile_dir}')
+        try:
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            return False, f'启动浏览器失败：{e}'
+        for _ in range(50):
+            time.sleep(0.2)
+            if _debug_browser_ready():
+                launched = True
+                break
+        if not launched:
+            return False, (f'{BROWSERS[browser_key]["name"]} 启动超时，请手动运行：'
+                           f'{BROWSERS[browser_key]["exe"]} --remote-debugging-port=9222')
+    # 无论是否刚启动，都调整窗口显示状态
+    _move_browser_window(visible)
+    if launched:
+        mode = '显示' if visible else '后台隐藏'
+        return True, f'已自动启动 {BROWSERS[browser_key]["name"]}（{mode}）'
+    return True, ('已显示浏览器窗口' if visible else '浏览器在后台隐藏运行')
 
 
 CITY_FETCH_TIMEOUT = 10                 # 拉取城市数据接口的超时秒数
@@ -1943,8 +1979,8 @@ class BossGuiApp(ctk.CTk):
         threading.Thread(target=self._do_open_login_page, args=(url, site_label, browser_name), daemon=True).start()
 
     def _do_open_login_page(self, url, site_label, browser_name):
-        """后台确保浏览器已启动并打开登录页"""
-        ok, msg = ensure_debug_browser()
+        """后台确保浏览器已启动（显示到可见区域）并打开登录页"""
+        ok, msg = ensure_debug_browser(visible=True)
         self.msg_queue.put(('log', f'· {msg}'))
         if not ok:
             return
@@ -2047,8 +2083,8 @@ class BossGuiApp(ctk.CTk):
 
     def _worker(self, city, city_code, keyword, pages, is_51job, browser='chrome'):
         try:
-            # 采集前确保调试模式浏览器已启动（未启动则自动启动）
-            ok, msg = ensure_debug_browser()
+            # 采集前确保调试模式浏览器已启动（未启动则自动启动，并在后台隐藏运行）
+            ok, msg = ensure_debug_browser(visible=False)
             self.msg_queue.put(('log', f'· {msg}'))
             if not ok:
                 return
