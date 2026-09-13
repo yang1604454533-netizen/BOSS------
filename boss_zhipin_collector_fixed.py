@@ -1603,20 +1603,21 @@ class BossGuiApp(ctk.CTk):
         )
         self.site_menu.grid(row=0, column=1, padx=(0, 14), pady=(12, 4), sticky='w')
 
-        # 浏览器（自动检测：优先 Edge，其次 Chrome，无需手动切换）
-        ctk.CTkLabel(param_frame, text='浏览器：', font=ctk.CTkFont(size=15)).grid(row=0, column=2, padx=(0, 4), pady=(12, 4))
-        self.browser_label = ctk.CTkLabel(
-            param_frame, text=f'{BROWSERS[self.current_browser]["label"]}（自动检测）',
-            font=ctk.CTkFont(size=14, weight='bold'), text_color=self._theme['primary']
-        )
-        self.browser_label.grid(row=0, column=3, padx=(0, 14), pady=(12, 4), sticky='w')
-
         # 打开登录页：在调试浏览器里直接打开当前网站的登录页，方便首次登录
         self.login_btn = ctk.CTkButton(
             param_frame, text='打开登录页', font=ctk.CTkFont(size=14),
             width=110, height=32, command=self._open_login_page
         )
-        self.login_btn.grid(row=0, column=4, padx=(0, 14), pady=(12, 4))
+        self.login_btn.grid(row=0, column=2, padx=(0, 8), pady=(12, 4))
+
+        # 使用说明：弹窗展示一步一步的操作步骤
+        self.help_btn = ctk.CTkButton(
+            param_frame, text='使用说明', font=ctk.CTkFont(size=14),
+            width=110, height=32, command=self._show_help,
+            fg_color='transparent', border_width=2, border_color='#2e8b57',
+            text_color='#2e8b57', hover_color='#e6f4ec'
+        )
+        self.help_btn.grid(row=0, column=3, padx=(0, 14), pady=(12, 4))
 
         ctk.CTkLabel(param_frame, text='选择城市：', font=ctk.CTkFont(size=15)).grid(row=1, column=0, padx=(16, 4), pady=(4, 14))
         self.city_var = ctk.StringVar(value='北京')
@@ -1656,7 +1657,7 @@ class BossGuiApp(ctk.CTk):
             width=125, height=38, command=self._stop_crawl,
             fg_color='#e74c3c', hover_color='#c0392b', text_color='white'
         )
-        self.stop_btn.grid(row=1, column=9, padx=(0, 14), pady=(4, 14))
+        self.stop_btn.grid(row=1, column=9, padx=(0, 20), pady=(4, 14))
 
         # ---------- 筛选区（第二行，对采集结果按字段筛选） ----------
         filter_frame = ctk.CTkFrame(self, corner_radius=12)
@@ -1848,7 +1849,6 @@ class BossGuiApp(ctk.CTk):
         primary = self._theme['primary']
         hover = self._theme['hover']
         self.title_label.configure(text_color=primary)
-        self.browser_label.configure(text_color=primary)
         for w in self._theme_widgets:
             try:
                 # CTkOptionMenu 是「左侧值显示区(fg_color) + 右侧箭头按钮(button_color)」两部分都得改
@@ -1893,6 +1893,32 @@ class BossGuiApp(ctk.CTk):
             exe = BROWSERS[self.current_browser]['exe']
             self.msg_queue.put(('log', f'⚠ 打开登录页失败：{type(e).__name__}: {e}'))
             self.msg_queue.put(('log', f'   请确认已用调试模式启动浏览器（命令行运行 {exe} --remote-debugging-port=9222），然后手动打开 {url} 登录。'))
+
+    def _show_help(self):
+        """弹窗展示一步一步的简易使用说明"""
+        b = BROWSERS[self.current_browser]
+        text = (
+            '【使用说明 · 一步一步来】\n\n'
+            f'第 1 步：启动浏览器（调试模式）\n'
+            f'  先关闭所有 {b["name"]} 窗口，再按 Win+R 输入 cmd 回车，粘贴运行：\n'
+            f'  {b["exe"]} --remote-debugging-port=9222\n\n'
+            '第 2 步：登录招聘网站（只需一次）\n'
+            '  点「打开登录页」，在弹出的浏览器里登录\n'
+            '  · 采 BOSS直聘：必须登录\n'
+            '  · 采 前程无忧：建议登录\n\n'
+            '第 3 步：设置采集条件\n'
+            '  选采集网站、城市、岗位关键词、采集页数\n\n'
+            '第 4 步：开始采集\n'
+            '  点「开始采集」，数据自动写入 CSV\n'
+            '  过程中可点「停止采集」随时中断\n\n'
+            '第 5 步：查看和导出\n'
+            '  左侧列表点岗位看详情\n'
+            '  点「导出全部岗位 / 导出当前列表」保存表格\n\n'
+            '小提示：\n'
+            '  · 采集中弹滑块验证码，去浏览器里手动滑一下即可继续\n'
+            '  · 结果 CSV 和日志保存在软件所在目录\n'
+        )
+        messagebox.showinfo('使用说明', text)
 
     def _load_cities_async(self):
         """后台拉取城市数据（全国城市表 + 热门城市 + 省份映射），成功后更新下拉框（不阻塞界面）"""
