@@ -3,6 +3,7 @@
 import os
 import sys
 import shutil
+import subprocess
 import time
 import re
 import json
@@ -82,6 +83,67 @@ def detect_browser():
         pass
     # 4. 兜底：默认 Edge（若实际未安装，采集连接失败时会给出对应启动命令提示）
     return 'edge'
+
+
+def _browser_exe_path(browser_key):
+    """返回浏览器可执行文件的完整路径，找不到返回 None"""
+    install_paths = {
+        'edge': [
+            r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
+            r'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
+        ],
+        'chrome': [
+            r'C:\Program Files\Google\Chrome\Application\chrome.exe',
+            r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
+        ],
+    }
+    for p in install_paths.get(browser_key, []):
+        if os.path.isfile(p):
+            return p
+    return shutil.which(BROWSERS[browser_key]['exe'])
+
+
+def _debug_browser_ready():
+    """检查 127.0.0.1:9222 是否已有调试模式浏览器在监听"""
+    try:
+        with urllib.request.urlopen('http://127.0.0.1:9222/json/version', timeout=2) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+def ensure_debug_browser():
+    """确保调试模式浏览器已启动：已在运行则复用，否则用独立用户数据目录自动启动。
+
+    独立用户数据目录放在软件目录下（browser_profile_xxx），登录态会保存在里面，
+    下次启动自动复用，无需再登录。返回 (是否成功, 提示信息)。"""
+    if _debug_browser_ready():
+        return True, '调试浏览器已在运行，直接复用'
+    browser_key = detect_browser()
+    exe_path = _browser_exe_path(browser_key)
+    if not exe_path:
+        return False, (f'未找到 {BROWSERS[browser_key]["name"]}，请手动运行：'
+                       f'{BROWSERS[browser_key]["exe"]} --remote-debugging-port=9222')
+    profile_dir = os.path.join(BASE_DIR, f'browser_profile_{browser_key}')
+    try:
+        os.makedirs(profile_dir, exist_ok=True)
+    except Exception:
+        profile_dir = None
+    cmd = [exe_path, '--remote-debugging-port=9222', '--no-first-run', '--no-default-browser-check']
+    if profile_dir:
+        cmd.append(f'--user-data-dir={profile_dir}')
+    try:
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        return False, f'启动浏览器失败：{e}'
+    for _ in range(50):
+        time.sleep(0.2)
+        if _debug_browser_ready():
+            return True, f'已自动启动 {BROWSERS[browser_key]["name"]}（调试模式）'
+    return False, (f'{BROWSERS[browser_key]["name"]} 启动超时，请手动运行：'
+                   f'{BROWSERS[browser_key]["exe"]} --remote-debugging-port=9222')
+
+
 CITY_FETCH_TIMEOUT = 10                 # 拉取城市数据接口的超时秒数
 PAGE_SLEEP_SECONDS = 5                  # 翻页之间的等待秒数
 JOBLIST_TIMEOUT = 5                     # 监听岗位列表接口的超时秒数
@@ -1785,8 +1847,7 @@ class BossGuiApp(ctk.CTk):
         ctk.CTkLabel(log_frame, text='运行日志', font=ctk.CTkFont(size=15, weight='bold')).pack(anchor='w', padx=16, pady=(10, 4))
         self.log_box = ctk.CTkTextbox(log_frame, height=230, font=ctk.CTkFont(size=13), state='disabled')
         self.log_box.pack(fill='x', padx=16, pady=(0, 12))
-        b = BROWSERS[self.current_browser]
-        self._log_ui(f'欢迎使用岗位采集助手！已自动检测浏览器：{b["label"]}。请先用调试模式启动它（{b["exe"]} --remote-debugging-port=9222），再选择网站开始采集。')
+        self._log_ui('欢迎使用岗位采集助手！首次使用请点「打开登录页」登录招聘网站，然后点「开始采集」即可（浏览器会自动启动）。')
 
         # 收集需跟随主题变色的控件（标题已单独处理），并统一对齐到当前主题色
         self._theme_widgets = (
@@ -1882,7 +1943,11 @@ class BossGuiApp(ctk.CTk):
         threading.Thread(target=self._do_open_login_page, args=(url, site_label, browser_name), daemon=True).start()
 
     def _do_open_login_page(self, url, site_label, browser_name):
-        """后台连接调试浏览器并打开登录页"""
+        """后台确保浏览器已启动并打开登录页"""
+        ok, msg = ensure_debug_browser()
+        self.msg_queue.put(('log', f'· {msg}'))
+        if not ok:
+            return
         try:
             co = ChromiumOptions()
             co.debugger_address = CHROME_DEBUG_ADDR
@@ -1892,30 +1957,23 @@ class BossGuiApp(ctk.CTk):
         except Exception as e:
             exe = BROWSERS[self.current_browser]['exe']
             self.msg_queue.put(('log', f'⚠ 打开登录页失败：{type(e).__name__}: {e}'))
-            self.msg_queue.put(('log', f'   请确认已用调试模式启动浏览器（命令行运行 {exe} --remote-debugging-port=9222），然后手动打开 {url} 登录。'))
+            self.msg_queue.put(('log', f'   请手动用调试模式启动浏览器（{exe} --remote-debugging-port=9222），再手动打开 {url} 登录。'))
 
     def _show_help(self):
         """弹窗展示一步一步的简易使用说明"""
-        b = BROWSERS[self.current_browser]
         text = (
-            '【使用说明 · 一步一步来】\n\n'
-            f'第 1 步：启动浏览器（调试模式）\n'
-            f'  先关闭所有 {b["name"]} 窗口，再按 Win+R 输入 cmd 回车，粘贴运行：\n'
-            f'  {b["exe"]} --remote-debugging-port=9222\n\n'
-            '第 2 步：登录招聘网站（只需一次）\n'
-            '  点「打开登录页」，在弹出的浏览器里登录\n'
-            '  · 采 BOSS直聘：必须登录\n'
-            '  · 采 前程无忧：建议登录\n\n'
-            '第 3 步：设置采集条件\n'
-            '  选采集网站、城市、岗位关键词、采集页数\n\n'
-            '第 4 步：开始采集\n'
-            '  点「开始采集」，数据自动写入 CSV\n'
-            '  过程中可点「停止采集」随时中断\n\n'
-            '第 5 步：查看和导出\n'
-            '  左侧列表点岗位看详情\n'
-            '  点「导出全部岗位 / 导出当前列表」保存表格\n\n'
+            '【使用说明 · 很简单】\n\n'
+            '第 1 步：点「打开登录页」\n'
+            '  软件会自动启动浏览器并打开登录页\n\n'
+            '第 2 步：在浏览器里登录\n'
+            '  · BOSS直聘：必须登录（手机号 / 扫码）\n'
+            '  · 前程无忧：建议也登录一次\n\n'
+            '第 3 步：点「开始采集」\n'
+            '  选好网站、城市、关键词、页数，点开始采集即可\n\n'
+            '完成后：\n'
+            '  左侧点岗位看详情，点「导出」保存表格。\n\n'
             '小提示：\n'
-            '  · 采集中弹滑块验证码，去浏览器里手动滑一下即可继续\n'
+            '  · 采集中弹滑块验证码，去浏览器滑一下即可继续\n'
             '  · 结果 CSV 和日志保存在软件所在目录\n'
         )
         messagebox.showinfo('使用说明', text)
@@ -1989,6 +2047,11 @@ class BossGuiApp(ctk.CTk):
 
     def _worker(self, city, city_code, keyword, pages, is_51job, browser='chrome'):
         try:
+            # 采集前确保调试模式浏览器已启动（未启动则自动启动）
+            ok, msg = ensure_debug_browser()
+            self.msg_queue.put(('log', f'· {msg}'))
+            if not ok:
+                return
             if is_51job:
                 crawl_51job(
                     city_name=city, city_code=city_code, keyword=keyword, total_pages=pages,
