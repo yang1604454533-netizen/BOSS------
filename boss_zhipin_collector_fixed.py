@@ -2,6 +2,7 @@
 # 核心：页面操作 + 接口监听，附带 customtkinter 现代风格界面
 import os
 import sys
+import shutil
 import time
 import re
 import json
@@ -39,6 +40,48 @@ BROWSERS = {
     'chrome': {'label': 'Chrome 谷歌浏览器', 'exe': 'chrome.exe', 'name': 'Chrome'},
     'edge':   {'label': 'Edge 微软浏览器',   'exe': 'msedge.exe', 'name': 'Edge'},
 }
+
+
+def detect_browser():
+    """检测本机可用的浏览器：优先 Edge，Edge 不存在时回退 Chrome；都没有则默认按 Edge 处理。
+
+    依次检查：常见安装路径 -> 系统 PATH -> 注册表 App Paths。
+    返回 BROWSERS 中的 key（'edge' 或 'chrome'）。"""
+    install_paths = {
+        'edge': [
+            r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
+            r'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
+        ],
+        'chrome': [
+            r'C:\Program Files\Google\Chrome\Application\chrome.exe',
+            r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
+        ],
+    }
+    # 1. 常见安装路径
+    for key in ('edge', 'chrome'):
+        for path in install_paths[key]:
+            if os.path.isfile(path):
+                return key
+    # 2. 系统 PATH
+    for key, exe in (('edge', 'msedge.exe'), ('chrome', 'chrome.exe')):
+        if shutil.which(exe):
+            return key
+    # 3. 注册表 App Paths
+    try:
+        import winreg
+        for key, exe in (('edge', 'msedge.exe'), ('chrome', 'chrome.exe')):
+            try:
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                                    rf'SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{exe}') as k:
+                    path = winreg.QueryValue(k, None)
+                    if path and os.path.isfile(path):
+                        return key
+            except OSError:
+                continue
+    except Exception:
+        pass
+    # 4. 兜底：默认 Edge（若实际未安装，采集连接失败时会给出对应启动命令提示）
+    return 'edge'
 CITY_FETCH_TIMEOUT = 10                 # 拉取城市数据接口的超时秒数
 PAGE_SLEEP_SECONDS = 5                  # 翻页之间的等待秒数
 JOBLIST_TIMEOUT = 5                     # 监听岗位列表接口的超时秒数
@@ -1462,7 +1505,7 @@ class BossGuiApp(ctk.CTk):
         self.multi_btns = {}                                           # 多选按钮控件 {字段: CTkButton}
         self.province_map = {}           # 城市名->省份 映射（用于补全省份信息）
         self.current_site = 'boss'                        # 当前采集网站：'boss' 或 '51job'
-        self.current_browser = 'edge'                     # 当前浏览器：'chrome' 或 'edge'
+        self.current_browser = detect_browser()           # 自动检测浏览器：优先 Edge，其次 Chrome
         self.all_51job_cities = dict(CITY_51JOB_OPTIONS)  # 51job 城市表 {城市名: 城市代码}
         self._theme_key = 'boss'                          # 当前主题：'boss' 或 '51job'
         self._theme = THEME_COLORS[self._theme_key]       # 当前主题色 {primary, hover}
@@ -1560,15 +1603,13 @@ class BossGuiApp(ctk.CTk):
         )
         self.site_menu.grid(row=0, column=1, padx=(0, 14), pady=(12, 4), sticky='w')
 
-        # 浏览器切换（Chrome / Edge，均为 Chromium 内核，调试端口一致）
+        # 浏览器（自动检测：优先 Edge，其次 Chrome，无需手动切换）
         ctk.CTkLabel(param_frame, text='浏览器：', font=ctk.CTkFont(size=15)).grid(row=0, column=2, padx=(0, 4), pady=(12, 4))
-        self.browser_var = ctk.StringVar(value=BROWSERS['edge']['label'])
-        self.browser_menu = ctk.CTkOptionMenu(
-            param_frame, variable=self.browser_var,
-            values=[BROWSERS['chrome']['label'], BROWSERS['edge']['label']],
-            width=170, font=ctk.CTkFont(size=14), command=self._on_browser_selected
+        self.browser_label = ctk.CTkLabel(
+            param_frame, text=f'{BROWSERS[self.current_browser]["label"]}（自动检测）',
+            font=ctk.CTkFont(size=14, weight='bold'), text_color=self._theme['primary']
         )
-        self.browser_menu.grid(row=0, column=3, padx=(0, 14), pady=(12, 4), sticky='w')
+        self.browser_label.grid(row=0, column=3, padx=(0, 14), pady=(12, 4), sticky='w')
 
         ctk.CTkLabel(param_frame, text='选择城市：', font=ctk.CTkFont(size=15)).grid(row=1, column=0, padx=(16, 4), pady=(4, 14))
         self.city_var = ctk.StringVar(value='北京')
@@ -1736,11 +1777,12 @@ class BossGuiApp(ctk.CTk):
         ctk.CTkLabel(log_frame, text='运行日志', font=ctk.CTkFont(size=15, weight='bold')).pack(anchor='w', padx=16, pady=(10, 4))
         self.log_box = ctk.CTkTextbox(log_frame, height=230, font=ctk.CTkFont(size=13), state='disabled')
         self.log_box.pack(fill='x', padx=16, pady=(0, 12))
-        self._log_ui('欢迎使用岗位采集助手！请先用调试模式启动 Chrome 或 Edge（chrome.exe / msedge.exe --remote-debugging-port=9222），再选择网站与浏览器开始采集。')
+        b = BROWSERS[self.current_browser]
+        self._log_ui(f'欢迎使用岗位采集助手！已自动检测浏览器：{b["label"]}。请先用调试模式启动它（{b["exe"]} --remote-debugging-port=9222），再选择网站开始采集。')
 
         # 收集需跟随主题变色的控件（标题已单独处理），并统一对齐到当前主题色
         self._theme_widgets = (
-            [self.start_btn, self.site_menu, self.browser_menu, self.city_menu, self.keyword_menu]
+            [self.start_btn, self.site_menu, self.city_menu, self.keyword_menu]
             + list(self.filter_menus.values())
             + list(self.location_menus.values())
             + list(self.multi_btns.values())
@@ -1799,6 +1841,7 @@ class BossGuiApp(ctk.CTk):
         primary = self._theme['primary']
         hover = self._theme['hover']
         self.title_label.configure(text_color=primary)
+        self.browser_label.configure(text_color=primary)
         for w in self._theme_widgets:
             try:
                 # CTkOptionMenu 是「左侧值显示区(fg_color) + 右侧箭头按钮(button_color)」两部分都得改
@@ -1821,12 +1864,6 @@ class BossGuiApp(ctk.CTk):
         self._refresh_city_menu()
         self._apply_theme()
         self._log_ui(f'已切换采集网站：{value}（城市代码与界面配色已同步切换）')
-
-    def _on_browser_selected(self, value):
-        """切换采集浏览器（Chrome / Edge），两者均为 Chromium 内核，调试端口一致"""
-        self.current_browser = 'edge' if value.startswith('Edge') else 'chrome'
-        exe = BROWSERS[self.current_browser]['exe']
-        self._log_ui(f'已切换浏览器：{value}（请以调试模式启动：{exe} --remote-debugging-port=9222）')
 
     def _load_cities_async(self):
         """后台拉取城市数据（全国城市表 + 热门城市 + 省份映射），成功后更新下拉框（不阻塞界面）"""
