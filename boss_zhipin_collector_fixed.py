@@ -1462,7 +1462,7 @@ class BossGuiApp(ctk.CTk):
         self.multi_btns = {}                                           # 多选按钮控件 {字段: CTkButton}
         self.province_map = {}           # 城市名->省份 映射（用于补全省份信息）
         self.current_site = 'boss'                        # 当前采集网站：'boss' 或 '51job'
-        self.current_browser = 'chrome'                   # 当前浏览器：'chrome' 或 'edge'
+        self.current_browser = 'edge'                     # 当前浏览器：'chrome' 或 'edge'
         self.all_51job_cities = dict(CITY_51JOB_OPTIONS)  # 51job 城市表 {城市名: 城市代码}
         self._theme_key = 'boss'                          # 当前主题：'boss' 或 '51job'
         self._theme = THEME_COLORS[self._theme_key]       # 当前主题色 {primary, hover}
@@ -1562,7 +1562,7 @@ class BossGuiApp(ctk.CTk):
 
         # 浏览器切换（Chrome / Edge，均为 Chromium 内核，调试端口一致）
         ctk.CTkLabel(param_frame, text='浏览器：', font=ctk.CTkFont(size=15)).grid(row=0, column=2, padx=(0, 4), pady=(12, 4))
-        self.browser_var = ctk.StringVar(value=BROWSERS['chrome']['label'])
+        self.browser_var = ctk.StringVar(value=BROWSERS['edge']['label'])
         self.browser_menu = ctk.CTkOptionMenu(
             param_frame, variable=self.browser_var,
             values=[BROWSERS['chrome']['label'], BROWSERS['edge']['label']],
