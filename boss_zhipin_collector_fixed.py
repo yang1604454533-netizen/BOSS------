@@ -1486,14 +1486,22 @@ class MultiSelectDropdown(ctk.CTkButton):
         # 先收起自己可能残留的面板，避免重复绑定点击事件
         self._close_popup()
         root = self.winfo_toplevel()
+        # 宽度：按最长选项文字自适应，避免文字被截断（含复选框方块 / 滚动条 / 内边距）
+        try:
+            max_text = max((self._font.measure(str(o)) for o in self.options), default=0)
+        except Exception:
+            max_text = 0
+        popup_w = max(self._current_width, int(max_text) + 72)
+        # 高度：贴合条目数自适应，避免底部留白；超过上限才出现滚动条
+        item_h = 30
+        popup_h = min(self.POPUP_HEIGHT, max(40, len(self.options) * item_h + 12))
         x = self.winfo_rootx()
         y = self.winfo_rooty() + self.winfo_height() + 2
         popup = ctk.CTkToplevel(root)
         popup.overrideredirect(True)
         popup.attributes('-topmost', True)
-        # 用逻辑尺寸（窗口缩放会统一放大），避免与控件缩放不一致导致面板过宽/过高
-        popup.geometry(f'{self._current_width}x{self.POPUP_HEIGHT}+{x}+{y}')
-        box = ctk.CTkScrollableFrame(popup, width=self._current_width, height=self.POPUP_HEIGHT)
+        popup.geometry(f'{popup_w}x{popup_h}+{x}+{y}')
+        box = ctk.CTkScrollableFrame(popup, width=popup_w, height=popup_h)
         box.pack(fill='both', expand=True)
         self._popup = popup
         self._box = box
@@ -1511,8 +1519,9 @@ class MultiSelectDropdown(ctk.CTkButton):
         for opt in self.options:
             var = ctk.BooleanVar(value=opt in self.selected)
             cb = ctk.CTkCheckBox(self._box, text=str(opt), variable=var,
-                                 font=self._font, command=lambda o=opt: self._on_item(o))
-            cb.pack(anchor='w', pady=3, padx=10)
+                                 font=self._font, checkbox_width=18, checkbox_height=18,
+                                 command=lambda o=opt: self._on_item(o))
+            cb.pack(anchor='w', fill='x', pady=3, padx=8)
             self._checkboxes[opt] = cb
 
     def _on_item(self, opt):
