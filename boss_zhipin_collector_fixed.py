@@ -180,6 +180,17 @@ def ensure_debug_browser(visible=False):
     return True, ('已显示浏览器窗口' if visible else '浏览器在后台隐藏运行')
 
 
+def _fit_optionmenu(menu):
+    """收紧 CTkOptionMenu 弹出菜单的最小宽度，让菜单贴合选项文字。
+
+    customtkinter 默认 min_character_width=18，选项短时右侧会留出大片空白、
+    滚动条也离文字很远；改成 8 后菜单宽度随最长选项自适应（长选项不会被截断）。"""
+    try:
+        menu._dropdown_menu.configure(min_character_width=8)
+    except Exception:
+        pass
+
+
 CITY_FETCH_TIMEOUT = 10                 # 拉取城市数据接口的超时秒数
 PAGE_SLEEP_SECONDS = 5                  # 翻页之间的等待秒数
 JOBLIST_TIMEOUT = 5                     # 监听岗位列表接口的超时秒数
@@ -1480,8 +1491,9 @@ class MultiSelectDropdown(ctk.CTkButton):
         popup = ctk.CTkToplevel(root)
         popup.overrideredirect(True)
         popup.attributes('-topmost', True)
-        popup.geometry(f'{self.winfo_width()}x{self.POPUP_HEIGHT}+{x}+{y}')
-        box = ctk.CTkScrollableFrame(popup, width=self.winfo_width(), height=self.POPUP_HEIGHT)
+        # 用逻辑尺寸（窗口缩放会统一放大），避免与控件缩放不一致导致面板过宽/过高
+        popup.geometry(f'{self._current_width}x{self.POPUP_HEIGHT}+{x}+{y}')
+        box = ctk.CTkScrollableFrame(popup, width=self._current_width, height=self.POPUP_HEIGHT)
         box.pack(fill='both', expand=True)
         self._popup = popup
         self._box = box
@@ -1577,10 +1589,11 @@ class BossGuiApp(ctk.CTk):
         fit = max(fit, 0.4)                              # 下限，与 customtkinter 的缩放下限一致
         self._fit_scale = fit
         ctk.set_widget_scaling(fit)                      # 等比缩放所有控件尺寸/字号
-        self.geometry(f'{int(design_w * fit)}x{int(design_h * fit)}')
+        ctk.set_window_scaling(fit)                      # 等比缩放窗口，保持窗口与控件缩放一致
+        self.geometry(f'{design_w}x{design_h}')
         # 允许用户放大（小屏上也更自由）；最小尺寸锁定为自适应后的完整尺寸，
         # 避免被拖小后裁掉内容。
-        self.minsize(int(design_w * fit), int(design_h * fit))
+        self.minsize(design_w, design_h)
         self.resizable(True, True)
 
         self.msg_queue = queue.Queue()   # 后台线程 -> 界面 的消息队列
@@ -1700,6 +1713,7 @@ class BossGuiApp(ctk.CTk):
             width=160, font=ctk.CTkFont(size=14), command=self._on_site_selected
         )
         self.site_menu.grid(row=0, column=1, padx=(0, 14), pady=(12, 4), sticky='w')
+        _fit_optionmenu(self.site_menu)
 
         # 打开登录页：在调试浏览器里直接打开当前网站的登录页，方便首次登录
         self.login_btn = ctk.CTkButton(
@@ -1724,6 +1738,7 @@ class BossGuiApp(ctk.CTk):
             width=110, font=ctk.CTkFont(size=14), command=self._on_city_selected
         )
         self.city_menu.grid(row=1, column=1, padx=(0, 8), pady=(4, 14))
+        _fit_optionmenu(self.city_menu)
         ctk.CTkEntry(
             param_frame, textvariable=self.city_var, width=110,
             placeholder_text='可自定义输入', font=ctk.CTkFont(size=14)
@@ -1736,6 +1751,7 @@ class BossGuiApp(ctk.CTk):
             width=130, font=ctk.CTkFont(size=14), command=self._on_keyword_selected
         )
         self.keyword_menu.grid(row=1, column=4, padx=(0, 8), pady=(4, 14))
+        _fit_optionmenu(self.keyword_menu)
         self.keyword_entry = ctk.CTkEntry(
             param_frame, textvariable=self.keyword_var, width=130,
             placeholder_text='可自定义输入', font=ctk.CTkFont(size=14))
@@ -1787,6 +1803,7 @@ class BossGuiApp(ctk.CTk):
             menu.grid(row=0, column=1)
             self.filter_vars[field] = var
             self.filter_menus[field] = menu
+            _fit_optionmenu(menu)
         # 重置按钮：橙色描边样式，与左侧下拉框明显区分
         ctk.CTkButton(
             filter_frame, text='重置筛选', width=90, height=30,
@@ -1807,6 +1824,7 @@ class BossGuiApp(ctk.CTk):
             menu.grid(row=0, column=1)
             self.location_vars[field] = var
             self.location_menus[field] = menu
+            _fit_optionmenu(menu)
             self.location_items[field] = item
             item.grid_remove()   # 初始隐藏，采集到数据后显示
 
