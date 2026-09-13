@@ -1,6 +1,7 @@
 # BOSS直聘岗位采集助手（图形界面版）
 # 核心：页面操作 + 接口监听，附带 customtkinter 现代风格界面
 import os
+import sys
 import time
 import re
 import json
@@ -19,7 +20,11 @@ from DrissionPage import ChromiumPage, ChromiumOptions
 import customtkinter as ctk
 
 # 脚本所在目录，导出的CSV都保存到这里，避免运行时找不到文件
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# 打包成 exe 后 __file__ 指向临时解压目录，改用 exe 所在目录，保证导出的文件落在用户能看到的地方
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # 设置文件：保存导出目录等用户偏好
 SETTINGS_FILE = os.path.join(BASE_DIR, '设置.json')
 # 运行日志目录：按日期滚动保存，避免历史日志被覆盖（不再使用固定的 '运行日志.txt'）
@@ -1410,11 +1415,23 @@ class BossGuiApp(ctk.CTk):
         ctk.set_default_color_theme('blue')
 
         self.title('岗位采集助手')
-        # 窗口宽度固定；高度自动适配屏幕，避免超出屏幕导致内容被压缩看不见
-        screen_h = self.winfo_screenheight()
-        win_h = min(1294, max(760, screen_h - 80))
-        self.geometry(f'1300x{win_h}')
-        self.resizable(False, False)
+
+        # ==================== 多分辨率 / 多缩放自适应 ====================
+        # 界面按 1300x1294 逻辑像素设计（在 4K 屏幕上完整显示）。若当前屏幕
+        # 可用区放不下整个设计尺寸，就整体等比缩小控件与窗口，保证在不同分辨率、
+        # 不同 Windows 缩放比下都能完整显示，而不是被窗口边缘裁掉。
+        self._dpi_scale = self._get_dpi_scale()          # 系统 DPI 缩放（100%=1.0，150%=1.5）
+        design_w, design_h = 1300, 1294                  # 设计基准尺寸（96DPI 逻辑像素）
+        avail_w, avail_h = self._get_screen_avail()      # 屏幕可用区（已换算为逻辑像素）
+        fit = min(avail_w / design_w, avail_h / design_h, 1.0)  # 只缩小、不放大
+        fit = max(fit, 0.4)                              # 下限，与 customtkinter 的缩放下限一致
+        self._fit_scale = fit
+        ctk.set_widget_scaling(fit)                      # 等比缩放所有控件尺寸/字号
+        self.geometry(f'{int(design_w * fit)}x{int(design_h * fit)}')
+        # 允许用户放大（小屏上也更自由）；最小尺寸锁定为自适应后的完整尺寸，
+        # 避免被拖小后裁掉内容。
+        self.minsize(int(design_w * fit), int(design_h * fit))
+        self.resizable(True, True)
 
         self.msg_queue = queue.Queue()   # 后台线程 -> 界面 的消息队列
         self.jobs = []                   # 已采集的岗位数据列表（全部）
@@ -1456,6 +1473,52 @@ class BossGuiApp(ctk.CTk):
         self.keyword_var.trace_add('write', lambda *a: self._schedule_keyword_refresh())
         self._load_cities_async()        # 后台加载全国城市，填充下拉框
         self._refresh_keyword_presets()  # 按默认岗位关键词刷新技能需求预设
+
+    # ---------- 屏幕自适应 ----------
+
+    def _get_dpi_scale(self):
+        """返回系统 DPI 缩放比例（100% -> 1.0，150% -> 1.5，200% -> 2.0）。"""
+        try:
+            return ctk.ScalingTracker.get_window_dpi_scaling(self)
+        except Exception:
+            pass
+        try:
+            # 兜底：用 Tk 的 DPI 换算（96DPI 为 1.0）
+            return self.winfo_fpixels('1i') / 96.0
+        except Exception:
+            return 1.0
+
+    def _get_screen_avail(self):
+        """返回屏幕可用区换算成 96DPI 逻辑像素后的 (宽, 高)。
+
+        取 Windows 工作区（SPI_GETWORKAREA，物理像素，已排除任务栏），除以 DPI
+        缩放得到逻辑像素，再扣除标题栏/边框高度，保证窗口外框能完整放入屏幕。
+        失败时退回整屏尺寸（GetSystemMetrics，物理像素）并预留任务栏/标题栏余量。"""
+        titlebar_h = 30  # 标题栏 + 边框高度（逻辑像素）
+        try:
+            import ctypes
+
+            class RECT(ctypes.Structure):
+                _fields_ = [('left', ctypes.c_long), ('top', ctypes.c_long),
+                            ('right', ctypes.c_long), ('bottom', ctypes.c_long)]
+
+            rect = RECT()
+            # SPI_GETWORKAREA = 0x0030，返回主屏工作区（物理像素，排除任务栏）
+            ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0)
+            w = (rect.right - rect.left) / self._dpi_scale
+            h = (rect.bottom - rect.top) / self._dpi_scale - titlebar_h
+            if w > 0 and h > 0:
+                return w, h
+        except Exception:
+            pass
+        try:
+            import ctypes
+            # SM_CXSCREEN=0 / SM_CYSCREEN=1：主屏物理分辨率
+            w = ctypes.windll.user32.GetSystemMetrics(0) / self._dpi_scale - 20
+            h = ctypes.windll.user32.GetSystemMetrics(1) / self._dpi_scale - 100
+            return w, h
+        except Exception:
+            return 1200, 720
 
     # ---------- 界面搭建 ----------
 
