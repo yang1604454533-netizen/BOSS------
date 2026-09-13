@@ -32,7 +32,13 @@ LOG_DIR = os.path.join(BASE_DIR, 'logs')
 LOG_FILE = os.path.join(LOG_DIR, f'运行日志_{datetime.date.today().strftime("%Y%m%d")}.txt')
 
 # ==================== 运行参数（集中管理魔法数字） ====================
-CHROME_DEBUG_ADDR = '127.0.0.1:9222'   # 调试模式 Chrome 的地址
+CHROME_DEBUG_ADDR = '127.0.0.1:9222'   # 调试模式浏览器的地址（Chrome/Edge 均为 Chromium 内核，端口一致）
+# 支持的浏览器：均为 Chromium 内核，通过 CDP 连接调试端口，Chrome 与 Edge 通用。
+# label=界面显示名，exe=命令行启动所用的可执行文件名，name=日志中显示的名称。
+BROWSERS = {
+    'chrome': {'label': 'Chrome 谷歌浏览器', 'exe': 'chrome.exe', 'name': 'Chrome'},
+    'edge':   {'label': 'Edge 微软浏览器',   'exe': 'msedge.exe', 'name': 'Edge'},
+}
 CITY_FETCH_TIMEOUT = 10                 # 拉取城市数据接口的超时秒数
 PAGE_SLEEP_SECONDS = 5                  # 翻页之间的等待秒数
 JOBLIST_TIMEOUT = 5                     # 监听岗位列表接口的超时秒数
@@ -874,7 +880,8 @@ def fetch_job_description(page, job_id, timeout=DESC_FETCH_TIMEOUT, logger=None)
 
 
 def crawl_boss_zhipin(city_name='北京', city_code=None, keyword='游戏测试', total_pages=5,
-                      on_log=None, on_job=None, province_map=None, should_stop=None):
+                      on_log=None, on_job=None, province_map=None, should_stop=None,
+                      browser='chrome'):
     """采集BOSS直聘岗位数据。
     city_code: BOSS直聘城市代码（可为空，为空时从热门城市表自动查找）
     province_map: 城市名->省份 映射（用于补全省份信息，可为空）
@@ -902,8 +909,9 @@ def crawl_boss_zhipin(city_name='北京', city_code=None, keyword='游戏测试'
         csv_writer = csv.DictWriter(f, fieldnames=CSV_FIELDNAMES)
         csv_writer.writeheader()
 
-        # 2. 连接调试模式 Chrome（需要先启动）
-        say(f'正在连接调试模式 Chrome（{CHROME_DEBUG_ADDR}）...')
+        # 2. 连接调试模式浏览器（Chrome/Edge 需先以调试模式启动）
+        browser_name = BROWSERS.get(browser, BROWSERS['chrome'])['name']
+        say(f'正在连接调试模式 {browser_name}（{CHROME_DEBUG_ADDR}）...')
         co = ChromiumOptions()
         co.debugger_address = CHROME_DEBUG_ADDR
         dp = ChromiumPage(co)
@@ -1108,7 +1116,7 @@ def fetch_51job_description(page, job_href, timeout=DESC_FETCH_TIMEOUT, logger=N
 
 
 def crawl_51job(city_name='北京', city_code=None, keyword='游戏测试', total_pages=5,
-                on_log=None, on_job=None, should_stop=None):
+                on_log=None, on_job=None, should_stop=None, browser='chrome'):
     """采集前程无忧（51job）岗位数据。
     city_code: 51job 城市代码（jobArea 参数，为空时从 CITY_51JOB_OPTIONS 自动查找）
     on_log: 日志回调(接收字符串)
@@ -1136,8 +1144,9 @@ def crawl_51job(city_name='北京', city_code=None, keyword='游戏测试', tota
         csv_writer = csv.DictWriter(f, fieldnames=CSV_FIELDNAMES)
         csv_writer.writeheader()
 
-        # 2. 连接调试模式 Chrome（需要先启动）
-        say(f'正在连接调试模式 Chrome（{CHROME_DEBUG_ADDR}）...')
+        # 2. 连接调试模式浏览器（Chrome/Edge 需先以调试模式启动）
+        browser_name = BROWSERS.get(browser, BROWSERS['chrome'])['name']
+        say(f'正在连接调试模式 {browser_name}（{CHROME_DEBUG_ADDR}）...')
         co = ChromiumOptions()
         co.debugger_address = CHROME_DEBUG_ADDR
         dp = ChromiumPage(co)
@@ -1453,6 +1462,7 @@ class BossGuiApp(ctk.CTk):
         self.multi_btns = {}                                           # 多选按钮控件 {字段: CTkButton}
         self.province_map = {}           # 城市名->省份 映射（用于补全省份信息）
         self.current_site = 'boss'                        # 当前采集网站：'boss' 或 '51job'
+        self.current_browser = 'chrome'                   # 当前浏览器：'chrome' 或 'edge'
         self.all_51job_cities = dict(CITY_51JOB_OPTIONS)  # 51job 城市表 {城市名: 城市代码}
         self._theme_key = 'boss'                          # 当前主题：'boss' 或 '51job'
         self._theme = THEME_COLORS[self._theme_key]       # 当前主题色 {primary, hover}
@@ -1549,6 +1559,16 @@ class BossGuiApp(ctk.CTk):
             width=160, font=ctk.CTkFont(size=14), command=self._on_site_selected
         )
         self.site_menu.grid(row=0, column=1, padx=(0, 14), pady=(12, 4), sticky='w')
+
+        # 浏览器切换（Chrome / Edge，均为 Chromium 内核，调试端口一致）
+        ctk.CTkLabel(param_frame, text='浏览器：', font=ctk.CTkFont(size=15)).grid(row=0, column=2, padx=(0, 4), pady=(12, 4))
+        self.browser_var = ctk.StringVar(value=BROWSERS['chrome']['label'])
+        self.browser_menu = ctk.CTkOptionMenu(
+            param_frame, variable=self.browser_var,
+            values=[BROWSERS['chrome']['label'], BROWSERS['edge']['label']],
+            width=170, font=ctk.CTkFont(size=14), command=self._on_browser_selected
+        )
+        self.browser_menu.grid(row=0, column=3, padx=(0, 14), pady=(12, 4), sticky='w')
 
         ctk.CTkLabel(param_frame, text='选择城市：', font=ctk.CTkFont(size=15)).grid(row=1, column=0, padx=(16, 4), pady=(4, 14))
         self.city_var = ctk.StringVar(value='北京')
@@ -1716,11 +1736,11 @@ class BossGuiApp(ctk.CTk):
         ctk.CTkLabel(log_frame, text='运行日志', font=ctk.CTkFont(size=15, weight='bold')).pack(anchor='w', padx=16, pady=(10, 4))
         self.log_box = ctk.CTkTextbox(log_frame, height=230, font=ctk.CTkFont(size=13), state='disabled')
         self.log_box.pack(fill='x', padx=16, pady=(0, 12))
-        self._log_ui('欢迎使用岗位采集助手！请先按说明用调试模式打开 Chrome，再选择网站开始采集。')
+        self._log_ui('欢迎使用岗位采集助手！请先用调试模式启动 Chrome 或 Edge（chrome.exe / msedge.exe --remote-debugging-port=9222），再选择网站与浏览器开始采集。')
 
         # 收集需跟随主题变色的控件（标题已单独处理），并统一对齐到当前主题色
         self._theme_widgets = (
-            [self.start_btn, self.site_menu, self.city_menu, self.keyword_menu]
+            [self.start_btn, self.site_menu, self.browser_menu, self.city_menu, self.keyword_menu]
             + list(self.filter_menus.values())
             + list(self.location_menus.values())
             + list(self.multi_btns.values())
@@ -1802,6 +1822,12 @@ class BossGuiApp(ctk.CTk):
         self._apply_theme()
         self._log_ui(f'已切换采集网站：{value}（城市代码与界面配色已同步切换）')
 
+    def _on_browser_selected(self, value):
+        """切换采集浏览器（Chrome / Edge），两者均为 Chromium 内核，调试端口一致"""
+        self.current_browser = 'edge' if value.startswith('Edge') else 'chrome'
+        exe = BROWSERS[self.current_browser]['exe']
+        self._log_ui(f'已切换浏览器：{value}（请以调试模式启动：{exe} --remote-debugging-port=9222）')
+
     def _load_cities_async(self):
         """后台拉取城市数据（全国城市表 + 热门城市 + 省份映射），成功后更新下拉框（不阻塞界面）"""
         def worker():
@@ -1854,10 +1880,11 @@ class BossGuiApp(ctk.CTk):
         self.start_btn.configure(state='disabled')
         # 开始新的采集时重置筛选条件：新数据全部采集不按筛选过滤，避免旧筛选把新岗位全部过滤导致列表看似为空
         self._clear_jobs(silent=True, reset_filters=True)
-        self._log_ui(f'▶ 开始采集（{site_label}）：{city} · {keyword}，共 {pages} 页（后台运行中，界面可正常操作）')
+        browser_name = BROWSERS.get(self.current_browser, BROWSERS['chrome'])['name']
+        self._log_ui(f'▶ 开始采集（{site_label} · {browser_name}）：{city} · {keyword}，共 {pages} 页（后台运行中，界面可正常操作）')
 
         worker = threading.Thread(
-            target=self._worker, args=(city, city_code, keyword, pages, is_51job), daemon=True)
+            target=self._worker, args=(city, city_code, keyword, pages, is_51job, self.current_browser), daemon=True)
         worker.start()
 
     def _stop_crawl(self):
@@ -1868,24 +1895,25 @@ class BossGuiApp(ctk.CTk):
         self._stop_event.set()
         self._log_ui('⏹ 已请求停止采集，正在收尾（最多等待当前页/当前岗位处理完成）...')
 
-    def _worker(self, city, city_code, keyword, pages, is_51job):
+    def _worker(self, city, city_code, keyword, pages, is_51job, browser='chrome'):
         try:
             if is_51job:
                 crawl_51job(
                     city_name=city, city_code=city_code, keyword=keyword, total_pages=pages,
                     on_log=lambda m: self.msg_queue.put(('log', m)),
                     on_job=lambda j: self.msg_queue.put(('job', j)),
-                    should_stop=self._stop_event.is_set)
+                    should_stop=self._stop_event.is_set, browser=browser)
             else:
                 crawl_boss_zhipin(
                     city_name=city, city_code=city_code, keyword=keyword, total_pages=pages,
                     on_log=lambda m: self.msg_queue.put(('log', m)),
                     on_job=lambda j: self.msg_queue.put(('job', j)),
                     province_map=self.province_map,
-                    should_stop=self._stop_event.is_set)
+                    should_stop=self._stop_event.is_set, browser=browser)
         except Exception as e:
+            exe = BROWSERS.get(browser, BROWSERS['chrome'])['exe']
             self.msg_queue.put(('log', f'爬虫运行异常：{type(e).__name__}: {e}'))
-            self.msg_queue.put(('log', '排查建议：1) 是否已用调试模式启动 Chrome（命令行运行 chrome.exe --remote-debugging-port=9222） 2) 是否有其他程序占用 9222 端口'))
+            self.msg_queue.put(('log', f'排查建议：1) 是否已用调试模式启动浏览器（命令行运行 {exe} --remote-debugging-port=9222） 2) 是否有其他程序占用 9222 端口'))
             # 完整堆栈经日志队列写入界面与日志文件（双击运行无控制台时也不会丢失）
             self.msg_queue.put(('log', traceback.format_exc()))
         finally:
@@ -1906,9 +1934,11 @@ class BossGuiApp(ctk.CTk):
                     self._stop_event.clear()
                     self.start_btn.configure(state='normal')
                     if not self.jobs:
+                        exe = BROWSERS.get(self.current_browser, BROWSERS['chrome'])['exe']
+                        browser_name = BROWSERS.get(self.current_browser, BROWSERS['chrome'])['name']
                         self._log_ui('⚠ 本次采集没有获取到任何岗位。排查建议：')
-                        self._log_ui('   1) 是否已用调试模式启动 Chrome？命令行执行：chrome.exe --remote-debugging-port=9222')
-                        self._log_ui('   2) Chrome 里是否已登录对应招聘网站（BOSS直聘需登录；51job 若触发验证码也需登录）')
+                        self._log_ui(f'   1) 是否已用调试模式启动 {browser_name}？命令行执行：{exe} --remote-debugging-port=9222')
+                        self._log_ui(f'   2) {browser_name} 里是否已登录对应招聘网站（BOSS直聘需登录；51job 若触发验证码也需登录）')
                         self._log_ui('   3) 检查上方日志中每一页的采集情况，确认是否被风控或接口变更')
                     else:
                         self._log_ui(f'✅ 本次采集完成，共 {len(self.jobs)} 条岗位，可点选查看详情或导出')
