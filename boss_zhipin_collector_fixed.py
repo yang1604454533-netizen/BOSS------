@@ -1611,6 +1611,13 @@ class BossGuiApp(ctk.CTk):
         )
         self.browser_label.grid(row=0, column=3, padx=(0, 14), pady=(12, 4), sticky='w')
 
+        # 打开登录页：在调试浏览器里直接打开当前网站的登录页，方便首次登录
+        self.login_btn = ctk.CTkButton(
+            param_frame, text='打开登录页', font=ctk.CTkFont(size=14),
+            width=110, height=32, command=self._open_login_page
+        )
+        self.login_btn.grid(row=0, column=4, padx=(0, 14), pady=(12, 4))
+
         ctk.CTkLabel(param_frame, text='选择城市：', font=ctk.CTkFont(size=15)).grid(row=1, column=0, padx=(16, 4), pady=(4, 14))
         self.city_var = ctk.StringVar(value='北京')
         self.city_menu = ctk.CTkOptionMenu(
@@ -1782,7 +1789,7 @@ class BossGuiApp(ctk.CTk):
 
         # 收集需跟随主题变色的控件（标题已单独处理），并统一对齐到当前主题色
         self._theme_widgets = (
-            [self.start_btn, self.site_menu, self.city_menu, self.keyword_menu]
+            [self.start_btn, self.site_menu, self.city_menu, self.keyword_menu, self.login_btn]
             + list(self.filter_menus.values())
             + list(self.location_menus.values())
             + list(self.multi_btns.values())
@@ -1864,6 +1871,28 @@ class BossGuiApp(ctk.CTk):
         self._refresh_city_menu()
         self._apply_theme()
         self._log_ui(f'已切换采集网站：{value}（城市代码与界面配色已同步切换）')
+
+    def _open_login_page(self):
+        """在调试模式浏览器中打开当前采集网站的登录页，方便首次登录（后台执行，不阻塞界面）"""
+        is_51job = self.current_site == '51job'
+        site_label = '前程无忧(51job)' if is_51job else 'BOSS直聘'
+        url = 'https://login.51job.com/login.htm' if is_51job else 'https://login.zhipin.com/'
+        browser_name = BROWSERS[self.current_browser]['name']
+        self._log_ui(f'▶ 正在 {browser_name} 调试浏览器中打开 {site_label} 登录页...')
+        threading.Thread(target=self._do_open_login_page, args=(url, site_label, browser_name), daemon=True).start()
+
+    def _do_open_login_page(self, url, site_label, browser_name):
+        """后台连接调试浏览器并打开登录页"""
+        try:
+            co = ChromiumOptions()
+            co.debugger_address = CHROME_DEBUG_ADDR
+            dp = ChromiumPage(co)
+            dp.new_tab(url)
+            self.msg_queue.put(('log', f'✅ 已在 {browser_name} 打开 {site_label} 登录页，请在浏览器窗口完成登录，登录后再回软件点「开始采集」。'))
+        except Exception as e:
+            exe = BROWSERS[self.current_browser]['exe']
+            self.msg_queue.put(('log', f'⚠ 打开登录页失败：{type(e).__name__}: {e}'))
+            self.msg_queue.put(('log', f'   请确认已用调试模式启动浏览器（命令行运行 {exe} --remote-debugging-port=9222），然后手动打开 {url} 登录。'))
 
     def _load_cities_async(self):
         """后台拉取城市数据（全国城市表 + 热门城市 + 省份映射），成功后更新下拉框（不阻塞界面）"""
